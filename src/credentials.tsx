@@ -602,7 +602,7 @@ function parseProviderSelection(value: string): OpenWikiProvider | null {
 
   const provider = normalizeProvider(trimmedInput);
 
-  return provider === "openrouter" ? null : provider;
+  return provider;
 }
 
 function parseModelSelection(

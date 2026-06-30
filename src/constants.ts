@@ -7,7 +7,7 @@ export const ANTHROPIC_API_KEY_ENV_KEY = "ANTHROPIC_API_KEY";
 export const OPENROUTER_API_KEY_ENV_KEY = "OPENROUTER_API_KEY";
 export const OPENWIKI_PROVIDER_ENV_KEY = "OPENWIKI_PROVIDER";
 export const OPENWIKI_MODEL_ID_ENV_KEY = "OPENWIKI_MODEL_ID";
-export const DEFAULT_PROVIDER = "baseten";
+export const DEFAULT_PROVIDER = "openrouter";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type OpenWikiProvider =
@@ -17,10 +17,7 @@ export type OpenWikiProvider =
   | "openai"
   | "openrouter";
 
-export type SelectableOpenWikiProvider = Exclude<
-  OpenWikiProvider,
-  "openrouter"
->;
+export type SelectableOpenWikiProvider = OpenWikiProvider;
 
 export type ProviderModelOption = {
   id: string;
@@ -35,6 +32,7 @@ type ProviderConfig = {
 };
 
 export const SELECTABLE_OPENWIKI_PROVIDERS = [
+  "openrouter",
   "baseten",
   "fireworks",
   "openai",

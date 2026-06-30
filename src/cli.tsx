@@ -1504,9 +1504,9 @@ function ChatInput({
   async function saveProviderSelection(rawProvider: string) {
     const provider = normalizeProvider(rawProvider);
 
-    if (provider === null || provider === "openrouter") {
+    if (provider === null) {
       setError(
-        "Enter a valid provider: baseten, fireworks, openai, or anthropic.",
+        "Enter a valid provider: openrouter, baseten, fireworks, openai, or anthropic.",
       );
       return;
     }
