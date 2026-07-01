@@ -1,4 +1,7 @@
-import { OPENROUTER_FALLBACK_MODEL_IDS, type OpenWikiProvider } from "../constants.js";
+import {
+  OPENROUTER_FALLBACK_MODEL_IDS,
+  type OpenWikiProvider,
+} from "../constants.js";
 
 export function createModelRoute(
   provider: OpenWikiProvider,

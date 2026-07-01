@@ -293,7 +293,11 @@ export function analyzeProviderMessages(messages: unknown): {
         ? { toolName: toolCallNames[toolCallId] }
         : {}),
       ...(toolCallId && toolCallArgs[toolCallId]
-        ? { toolArgsPreview: truncateDiagnosticPreview(toolCallArgs[toolCallId]) }
+        ? {
+            toolArgsPreview: truncateDiagnosticPreview(
+              toolCallArgs[toolCallId],
+            ),
+          }
         : {}),
       ...(typeof message.name === "string" ? { name: message.name } : {}),
     });
@@ -352,14 +356,11 @@ export function analyzeMessageContent(content: unknown): {
 
       if (!isRecord(block)) {
         types.push(typeof block);
-        issues.push(
-          `content[${blockIndex}] unexpected type=${typeof block}`,
-        );
+        issues.push(`content[${blockIndex}] unexpected type=${typeof block}`);
         continue;
       }
 
-      const blockType =
-        typeof block.type === "string" ? block.type : "unknown";
+      const blockType = typeof block.type === "string" ? block.type : "unknown";
       types.push(blockType);
 
       if (blockType === "text" && typeof block.text === "string") {
@@ -468,9 +469,7 @@ function detectProviderApiKind(url: string): string {
   return "unknown";
 }
 
-function collectToolCallNames(
-  messages: unknown[],
-): Record<string, string> {
+function collectToolCallNames(messages: unknown[]): Record<string, string> {
   const toolCallNames: Record<string, string> = {};
 
   for (const message of messages) {
@@ -483,12 +482,13 @@ function collectToolCallNames(
         continue;
       }
 
-      const name = isRecord(toolCall.function) &&
+      const name =
+        isRecord(toolCall.function) &&
         typeof toolCall.function.name === "string"
-        ? toolCall.function.name
-        : typeof toolCall.name === "string"
-          ? toolCall.name
-          : undefined;
+          ? toolCall.function.name
+          : typeof toolCall.name === "string"
+            ? toolCall.name
+            : undefined;
 
       if (name) {
         toolCallNames[toolCall.id] = name;
@@ -499,9 +499,7 @@ function collectToolCallNames(
   return toolCallNames;
 }
 
-function collectToolCallArgs(
-  messages: unknown[],
-): Record<string, string> {
+function collectToolCallArgs(messages: unknown[]): Record<string, string> {
   const toolCallArgs: Record<string, string> = {};
 
   for (const message of messages) {

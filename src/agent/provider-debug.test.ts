@@ -17,9 +17,9 @@ describe("isProviderLlmFetchInput", () => {
   });
 
   it("matches OpenAI responses API", () => {
-    expect(
-      isProviderLlmFetchInput("https://api.openai.com/v1/responses"),
-    ).toBe(true);
+    expect(isProviderLlmFetchInput("https://api.openai.com/v1/responses")).toBe(
+      true,
+    );
   });
 
   it("ignores unrelated URLs", () => {
@@ -203,10 +203,13 @@ describe("installProviderDebugFetch", () => {
   });
 
   it("uses responses API URLs without treating them as chat-completions", () => {
-    const summary = summarizeProviderRequest("https://api.openai.com/v1/responses", {
-      method: "POST",
-      body: JSON.stringify({ model: "gpt-5.5", input: [] }),
-    });
+    const summary = summarizeProviderRequest(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5.5", input: [] }),
+      },
+    );
 
     expect(summary.apiKind).toBe("openai-responses");
   });
