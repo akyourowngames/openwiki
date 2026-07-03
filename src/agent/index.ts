@@ -12,6 +12,7 @@ import { loadOpenWikiEnv, openWikiEnvDir } from "../env.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import type {
   OpenWikiCommand,
+  OpenWikiOutputMode,
   OpenWikiRunEvent,
   OpenWikiRunOptions,
   OpenWikiRunResult,
@@ -160,10 +161,13 @@ async function runOpenWikiAgentCore(
   provider: OpenWikiProvider,
   modelId: string,
 ): Promise<OpenWikiRunResult> {
-  const context = await createRunContext(command, cwd);
+  const outputMode = options.outputMode ?? "repository";
+  const context = await createRunContext(command, cwd, outputMode);
   emitDebug(options, "context=created");
   const openWikiSnapshotBefore =
-    command === "chat" ? null : await createOpenWikiContentSnapshot(cwd);
+    command === "chat"
+      ? null
+      : await createOpenWikiContentSnapshot(cwd, outputMode);
   emitDebug(options, "openwiki.snapshot=created");
   const model = await createModel(provider, modelId);
   emitDebug(options, `model.provider=${provider}`);
@@ -190,7 +194,7 @@ async function runOpenWikiAgentCore(
       timeout: 120,
       virtualMode: true,
     }),
-    systemPrompt: createSystemPrompt(command),
+    systemPrompt: createSystemPrompt(command, outputMode),
   });
   emitDebug(options, "agent=created");
 
@@ -233,9 +237,10 @@ async function runOpenWikiAgentCore(
 
   if (
     command !== "chat" &&
-    openWikiSnapshotBefore !== (await createOpenWikiContentSnapshot(cwd))
+    openWikiSnapshotBefore !==
+      (await createOpenWikiContentSnapshot(cwd, outputMode))
   ) {
-    await writeLastUpdateMetadata(command, cwd, modelId);
+    await writeLastUpdateMetadata(command, cwd, modelId, outputMode);
     emitDebug(options, "metadata=written");
   } else {
     emitDebug(
@@ -281,19 +286,34 @@ function createRunUserMessage(
   }
 
   return `
-${createUserPrompt(command, context, options.userMessage ?? null)}
+${createUserPrompt(
+  command,
+  context,
+  options.userMessage ?? null,
+  options.outputMode ?? "repository",
+)}
 
-Repository root:
+${formatRuntimeRootLabel(options.outputMode ?? "repository")}:
 ${cwd}
 
 Runtime note:
-- Treat the repository root above as the only project you are documenting.
-- Filesystem tools use a virtual root: / means ${cwd}.
-- For ls, read_file, write_file, edit_file, glob, and grep, use virtual paths such as /README.md, /agent/agents/main.py, and /openwiki/quickstart.md.
+- ${formatRuntimeRootInstruction(options.outputMode ?? "repository")}
 - Do not pass host absolute paths to filesystem tools. A host absolute path will be treated as a virtual path and will write to the wrong location.
-- Shell execute commands run on the host. For execute, use cd ${cwd} before repository commands.
-- Do not search parent directories or unrelated repositories.
+- Shell execute commands run on the host. For execute, use cd ${cwd} before commands that should run against this root.
+- Do not search parent directories or unrelated directories.
 `.trim();
+}
+
+function formatRuntimeRootLabel(outputMode: OpenWikiOutputMode): string {
+  return outputMode === "local-wiki" ? "Local wiki root" : "Repository root";
+}
+
+function formatRuntimeRootInstruction(outputMode: OpenWikiOutputMode): string {
+  if (outputMode === "local-wiki") {
+    return "Filesystem tools use a virtual root: / means the local wiki directory above. Write wiki pages directly under /, for example /quickstart.md, /sources/gmail.md, and /_plan.md. Do not create a nested /openwiki directory.";
+  }
+
+  return "Treat the repository root above as the only project you are documenting. Filesystem tools use a virtual root: / means the repository root. For ls, read_file, write_file, edit_file, glob, and grep, use virtual paths such as /README.md, /agent/agents/main.py, and /openwiki/quickstart.md.";
 }
 
 async function createCheckpointer(): Promise<SqliteSaver> {

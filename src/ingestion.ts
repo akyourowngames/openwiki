@@ -13,7 +13,11 @@ import {
   type OnboardingSourceConfig,
   type OpenWikiOnboardingConfig,
 } from "./onboarding.js";
-import { getConnectorConfigPath } from "./openwiki-home.js";
+import {
+  ensureOpenWikiHome,
+  getConnectorConfigPath,
+  openWikiLocalWikiDir,
+} from "./openwiki-home.js";
 import { createOpenWikiThreadId, runOpenWikiAgent } from "./agent/index.js";
 import type {
   OpenWikiRunEvent,
@@ -46,10 +50,12 @@ export type OpenWikiIngestionOptions = Pick<
 };
 
 export async function runOpenWikiIngestion(
-  cwd = process.cwd(),
+  _cwd = process.cwd(),
   options: OpenWikiIngestionOptions,
 ): Promise<OpenWikiIngestionResult> {
+  void _cwd;
   await loadOpenWikiEnv();
+  await ensureOpenWikiHome();
   const config = await readOpenWikiOnboardingConfig();
   const registry = createConnectorRegistry();
   const connectorIds = resolveIngestionConnectorIds(options.target, config);
@@ -73,7 +79,7 @@ export async function runOpenWikiIngestion(
       await runSourceIngestion({
         config,
         connector,
-        cwd,
+        cwd: openWikiLocalWikiDir,
         emit: options.onEvent,
         modelId: options.modelId,
         sourceConfig,
@@ -139,6 +145,7 @@ async function runSourceIngestion({
       isFollowup: false,
       modelId,
       onEvent: emit,
+      outputMode: "local-wiki",
       threadId: createOpenWikiThreadId(cwd),
       userMessage: createSourceUpdateMessage({
         config,
@@ -226,8 +233,8 @@ ${formatRawFileList(rawFiles)}
 
 Instructions:
 - Read the raw data files above before updating the wiki.
-- These paths are host filesystem paths under ~/.openwiki. Do not pass them to virtual filesystem tools. Use shell commands such as cat, jq, or node from the repository root if you need to inspect them.
-- Summarize, merge, and deduplicate the new source data into the OpenWiki docs under /openwiki.
+- These paths are host filesystem paths under ~/.openwiki. Do not pass them to virtual filesystem tools. Use shell commands such as cat, jq, or node from the local wiki root if you need to inspect them.
+- Summarize, merge, and deduplicate the new source data into the local OpenWiki docs under ~/.openwiki/wiki. Filesystem tools are rooted at that wiki directory, so write pages directly under /, such as /quickstart.md or /sources/${connector.id}.md. Do not create a nested /openwiki directory.
 - Do not run other source ingestions in this run.
 `.trim();
   }
@@ -251,7 +258,7 @@ Source config:
 
 Instructions:
 - Gather only data relevant to this source and the last ${INGESTION_WINDOW_HOURS} hours.
-- Update the OpenWiki docs under /openwiki with the relevant findings.
+- Update the local OpenWiki docs under ~/.openwiki/wiki with the relevant findings. Filesystem tools are rooted at that wiki directory, so write pages directly under /, such as /quickstart.md or /sources/${connector.id}.md. Do not create a nested /openwiki directory.
 - Do not run other source ingestions in this run.
 `.trim();
 }
