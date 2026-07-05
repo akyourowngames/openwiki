@@ -5,6 +5,7 @@ export const FIREWORKS_API_KEY_ENV_KEY = "FIREWORKS_API_KEY";
 export const OPENAI_API_KEY_ENV_KEY = "OPENAI_API_KEY";
 export const ANTHROPIC_API_KEY_ENV_KEY = "ANTHROPIC_API_KEY";
 export const OPENROUTER_API_KEY_ENV_KEY = "OPENROUTER_API_KEY";
+export const OPENCODE_API_KEY_ENV_KEY = "OPENCODE_API_KEY";
 export const OPENWIKI_PROVIDER_ENV_KEY = "OPENWIKI_PROVIDER";
 export const OPENWIKI_MODEL_ID_ENV_KEY = "OPENWIKI_MODEL_ID";
 export const DEFAULT_PROVIDER = "openrouter";
@@ -14,6 +15,7 @@ export type OpenWikiProvider =
   | "anthropic"
   | "baseten"
   | "fireworks"
+  | "opencode"
   | "openai"
   | "openrouter";
 
@@ -35,6 +37,7 @@ export const SELECTABLE_OPENWIKI_PROVIDERS = [
   "openrouter",
   "baseten",
   "fireworks",
+  "opencode",
   "openai",
   "anthropic",
 ] as const satisfies readonly SelectableOpenWikiProvider[];
@@ -59,6 +62,20 @@ export const PROVIDER_CONFIGS: Record<OpenWikiProvider, ProviderConfig> = {
         id: "accounts/fireworks/models/kimi-k2p7-code",
         label: "Kimi K2.7 Code",
       },
+    ],
+  },
+  opencode: {
+    apiKeyEnvKey: OPENCODE_API_KEY_ENV_KEY,
+    baseURL: "https://opencode.ai/zen/v1",
+    label: "OpenCode",
+    modelOptions: [
+      { id: "deepseek-v4-flash-free", label: "DeepSeek V4 Flash" },
+      { id: "mimo-v2.5-free", label: "MiMo V2.5" },
+      { id: "qwen3.6-plus-free", label: "Qwen 3.6 Plus" },
+      { id: "minimax-m3-free", label: "MiniMax M3" },
+      { id: "nemotron-3-ultra-free", label: "Nemotron 3 Ultra" },
+      { id: "north-mini-code-free", label: "North Mini Code" },
+      { id: "big-pickle", label: "Big Pickle" },
     ],
   },
   openai: {
