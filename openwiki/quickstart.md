@@ -32,7 +32,7 @@ OpenWiki is a TypeScript CLI that writes and maintains documentation for a repos
 - `src/env.ts` — `~/.openwiki/.env` persistence and credential diagnostics.
 - `src/credentials.tsx` — interactive onboarding flow for provider selection, API keys, and model selection.
 - `src/constants.ts` — provider configs, model options, env keys, and validation helpers.
-- `.github/workflows/openwiki-update.yml` — scheduled automation example.
+- `examples/openwiki-update.yml` — copyable scheduled automation example (see also `.github/workflows/openwiki-update.yml` for the repo's own workflow).
 
 ## Documentation map
 
@@ -62,4 +62,5 @@ OpenWiki is a TypeScript CLI that writes and maintains documentation for a repos
 - `src/credentials.tsx`
 - `src/constants.ts`
 - `.github/workflows/openwiki-update.yml`
+- `examples/openwiki-update.yml`
 - Git evidence: commits `ceded10`, `f89b05d`, `a82759f`, `dfa73cc`, `fd3a702`, `8278c36`, `0fa1430`

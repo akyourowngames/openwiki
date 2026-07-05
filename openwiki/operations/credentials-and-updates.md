@@ -73,7 +73,7 @@ Update runs use this metadata to build a change summary since the previous succe
 
 ## GitHub Actions workflow
 
-The repository includes `.github/workflows/openwiki-update.yml` as a copyable scheduled update workflow. It:
+The repository ships `examples/openwiki-update.yml` as a copyable scheduled update workflow for users (the README points to this file). The repo's own automation lives at `.github/workflows/openwiki-update.yml` and follows the same structure. The workflow:
 
 - runs on schedule (daily at 08:00 UTC) and on manual dispatch,
 - checks out the repository,
@@ -102,5 +102,6 @@ The workflow is a good reference for automated maintenance. The repo also contai
 - `src/agent/utils.ts`
 - `src/agent/index.ts`
 - `.github/workflows/openwiki-update.yml`
+- `examples/openwiki-update.yml`
 - `README.md`
 - Git evidence: commits `ceded10`, `f89b05d`, `8278c36`, `0fa1430`

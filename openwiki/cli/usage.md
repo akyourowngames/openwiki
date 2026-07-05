@@ -32,10 +32,11 @@ If stdin is not a TTY (e.g. CI), or `--print` is used, the CLI requires a provid
 - chat submission and follow-up messages,
 - `init` / `update` command launches (including from `/init` and `/update` slash commands),
 - provider and model selection during the session (`/provider`, `/model`),
+- `/clear` to start a fresh thread and clear chat history, and `/help` for slash command help,
 - interactive credential setup when required (including for init/update, not just chat),
 - streaming agent text and tool events,
 - completed-run history and error display,
-- exit handling for help, errors, and explicit `/exit` messages.
+- exit handling for errors and explicit `/exit` (or `exit`/`quit`) messages.
 
 The UI persists provider and model selection back to `~/.openwiki/.env` through `saveOpenWikiEnv()`.
 
