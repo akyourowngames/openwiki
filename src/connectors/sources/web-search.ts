@@ -57,16 +57,19 @@ async function ingest(
   options: ConnectorIngestOptions = {},
 ): Promise<ConnectorIngestResult> {
   const runId = createRunId();
-  const config = await readConnectorConfig<WebSearchConfig>("web-search", {
-    enabled: true,
-    includeAnswer: true,
-    includeImages: false,
-    includeRawContent: false,
-    maxResults: 5,
-    queries: [],
-    searchDepth: "basic",
-    topic: "general",
-  });
+  const config = {
+    ...(await readConnectorConfig<WebSearchConfig>("web-search", {
+      enabled: true,
+      includeAnswer: true,
+      includeImages: false,
+      includeRawContent: false,
+      maxResults: 5,
+      queries: [],
+      searchDepth: "basic",
+      topic: "general",
+    })),
+    ...((options.connectorConfig ?? {}) as WebSearchConfig),
+  };
   const state = await readConnectorState("web-search");
   const warnings: string[] = [];
   const rawFiles: string[] = [];
@@ -137,6 +140,7 @@ async function ingest(
   rawFiles.push(
     await writeRawJson("web-search", runId, "web-search-results.json", {
       fetchedAt: new Date().toISOString(),
+      instanceId: options.instanceId,
       maxResults: limit,
       queryCount: queries.length,
       results,

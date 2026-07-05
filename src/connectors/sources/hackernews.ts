@@ -83,14 +83,17 @@ async function ingest(
   options: ConnectorIngestOptions = {},
 ): Promise<ConnectorIngestResult> {
   const runId = createRunId();
-  const config = await readConnectorConfig<HackerNewsConfig>("hackernews", {
-    enabled: true,
-    feeds: DEFAULT_FEEDS,
-    maxItemsPerFeed: 30,
-    maxResultsPerQuery: 20,
-    queries: [],
-    queryTags: ["story"],
-  });
+  const config = {
+    ...(await readConnectorConfig<HackerNewsConfig>("hackernews", {
+      enabled: true,
+      feeds: DEFAULT_FEEDS,
+      maxItemsPerFeed: 30,
+      maxResultsPerQuery: 20,
+      queries: [],
+      queryTags: ["story"],
+    })),
+    ...((options.connectorConfig ?? {}) as HackerNewsConfig),
+  };
   const state = await readConnectorState("hackernews");
   const warnings: string[] = [];
   const rawFiles: string[] = [];
@@ -169,6 +172,7 @@ async function ingest(
     await writeRawJson("hackernews", runId, "hackernews-results.json", {
       feeds: feedResults,
       fetchedAt: new Date().toISOString(),
+      instanceId: options.instanceId,
       queryResults,
       windowHours,
     }),

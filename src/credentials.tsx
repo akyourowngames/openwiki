@@ -66,9 +66,9 @@ type PromptStep =
   | "model"
   | "provider"
   | "source-auth"
-  | "source-cron-custom"
-  | "source-cron-mode"
-  | "source-power-mode"
+  | "global-cron-custom"
+  | "global-cron-mode"
+  | "global-power-mode"
   | "source-description"
   | "source-description-custom"
   | "source-menu"
@@ -95,6 +95,7 @@ type SourceSecretInput = {
 
 type SourceSetupState = {
   authUrl?: string;
+  connectorConfig?: Record<string, unknown>;
   copiedAuthUrlToClipboard?: boolean;
   savedScheduleWarning?: string;
   secretValues: Record<string, string>;
@@ -135,79 +136,29 @@ type OnboardingTemplate = {
 const ONBOARDING_TEMPLATES = [
   {
     description:
-      "Start from a blank prompt and describe exactly what you need.",
-    id: "custom",
-    name: "Custom",
-    sourceIds: [
-      "git-repo",
-      "notion",
-      "google",
-      "web-search",
-      "hackernews",
-      "x",
-    ],
-    suggestedSources: [],
-    suggestedGoal: "",
-  },
-  {
-    description:
-      "Projects, decisions, tasks, docs, code changes, and important personal work context.",
-    id: "personal-work-os",
-    name: "Personal Work OS",
-    sourceIds: ["git-repo", "notion", "google", "x"],
-    suggestedSources: ["Gmail", "Notion", "Git repo", "X/Twitter"],
+      "Maintain a structured project wiki from a local Git repository, with code-oriented pages for architecture, workflows, source maps, and operational guidance.",
+    id: "code",
+    name: "Code",
+    sourceIds: ["git-repo"],
+    suggestedSources: ["Local Git repository"],
     suggestedGoal:
-      "A personal work wiki across Gmail, Notion, Git repositories, and X. Tracks active projects, decisions, tasks, useful documents, code changes, important links, and recurring themes so work context is easy to ask about later.",
+      "A code wiki for this local repository. Prioritize a concise quickstart, architecture overview, source map, key workflows, domain concepts, operations/runbook notes, testing guidance, and integration points. Keep pages grounded in the repository structure and recent code changes. Prefer practical navigation for engineers over generic summaries.",
   },
   {
     description:
-      "Topic monitoring across social discussion, HN, web search, and notes.",
-    id: "research-radar",
-    name: "AI Research Radar",
-    sourceIds: ["notion", "web-search", "hackernews", "x"],
+      "A personal assistant wiki that builds memory from email, notes, social/research sources, and web search so you can ask about projects, priorities, people, and recurring context.",
+    id: "second-brain",
+    name: "Second Brain",
+    sourceIds: ["google", "notion", "web-search", "hackernews", "x"],
     suggestedSources: [
+      "Gmail",
+      "Notion",
+      "Web Search (Tavily)",
+      "Hacker News",
       "X/Twitter",
-      "Hacker News",
-      "Web Search (Tavily)",
-      "Notion",
     ],
     suggestedGoal:
-      "An AI research radar across X, Hacker News, general web search, and Notion. Tracks useful links, technical discussions, papers, launches, research notes, and recurring ideas so recent developments and best references are easy to review.",
-  },
-  {
-    description:
-      "Project documentation from code, specs, planning notes, and related email.",
-    id: "project-wiki",
-    name: "Git Project Wiki",
-    sourceIds: ["git-repo", "notion", "google"],
-    suggestedSources: ["Git repo", "Notion", "Gmail"],
-    suggestedGoal:
-      "A focused Git project wiki from local repositories, Notion specs, planning notes, and relevant Gmail threads. Tracks architecture, implementation details, decisions, open questions, owners, and recent changes.",
-  },
-  {
-    description:
-      "Daily briefing from X/Twitter, Hacker News, and web search around a topic.",
-    id: "social-market-briefing",
-    name: "Social Media + Market Briefing",
-    sourceIds: ["web-search", "hackernews", "x"],
-    suggestedSources: ["X/Twitter", "Hacker News", "Web Search (Tavily)"],
-    suggestedGoal:
-      "A recurring social media and market briefing from X, Hacker News, and general web search. Tracks what people are discussing, important links, product launches, competitor updates, repeated claims, and signals that are worth following up on.",
-  },
-  {
-    description:
-      "Codebase memory connected to architecture docs and external technical references.",
-    id: "engineering-memory",
-    name: "Engineering Memory",
-    sourceIds: ["git-repo", "notion", "web-search", "hackernews"],
-    suggestedSources: [
-      "Git repo",
-      "Notion",
-      "Hacker News",
-      "Web Search (Tavily)",
-    ],
-    suggestedGoal:
-      "An engineering memory for codebases and technical systems. Connects Git repository changes, architecture notes, implementation plans, Notion docs, Hacker News discussions, and web references so systems are easier to understand and explain.",
+      "A second brain for personal assistance. Track active projects, people, organizations, decisions, commitments, follow-ups, useful links, recurring themes, and fresh external signals. Organize the wiki so a personal assistant can answer what changed, what matters, what needs attention, and where supporting evidence came from. Be selective: summarize durable context and explicit action items, not every raw item.",
   },
 ] as const satisfies readonly OnboardingTemplate[];
 
@@ -538,7 +489,7 @@ export function InitSetup({
       return;
     }
 
-    if (step === "source-cron-mode") {
+    if (step === "global-cron-mode") {
       handleMenuInput(key, () =>
         setCronModeSelectionIndex((index) =>
           moveSelectionIndex(
@@ -551,7 +502,7 @@ export function InitSetup({
       return;
     }
 
-    if (step === "source-power-mode") {
+    if (step === "global-power-mode") {
       handleMenuInput(key, () =>
         setPowerModeSelectionIndex((index) =>
           moveSelectionIndex(
@@ -606,7 +557,7 @@ export function InitSetup({
       return;
     }
 
-    if (step === "source-cron-custom") {
+    if (step === "global-cron-custom") {
       if (key.return) {
         void submit();
         return;
@@ -795,8 +746,10 @@ export function InitSetup({
       };
       await saveConfig(nextConfig);
       setInput("");
-      setSourceSelectionIndex(0);
-      setStep("source-menu");
+      setCronModeSelectionIndex(0);
+      setCronFieldSelectionIndex(0);
+      setCronReplaceCurrentField(true);
+      setStep("global-cron-mode");
       return;
     }
 
@@ -816,7 +769,7 @@ export function InitSetup({
 
     if (step === "source-menu") {
       if (sourceSelectionIndex >= activeSourceOptions.length) {
-        if (allSourcesConnected(onboardingConfig, activeSourceOptions)) {
+        if (getConnectedSourceCount(onboardingConfig, activeSourceOptions) > 0) {
           setStep("final");
           return;
         }
@@ -920,22 +873,22 @@ export function InitSetup({
       return;
     }
 
-    if (step === "source-cron-mode") {
+    if (step === "global-cron-mode") {
       const selectedMode = CRON_MODE_OPTIONS[cronModeSelectionIndex];
 
       if (selectedMode === "Enter custom cron") {
         setInput(suggestedCronExpression);
         setCronFieldSelectionIndex(0);
         setCronReplaceCurrentField(true);
-        setStep("source-cron-custom");
+        setStep("global-cron-custom");
         return;
       }
 
-      await saveSourceSchedule(suggestedCronExpression);
+      await saveGlobalIngestionSchedule(suggestedCronExpression);
       return;
     }
 
-    if (step === "source-cron-custom") {
+    if (step === "global-cron-custom") {
       const validation = validateCronExpression(input);
 
       if (!validation.valid) {
@@ -943,19 +896,22 @@ export function InitSetup({
         return;
       }
 
-      await saveSourceSchedule(validation.expression);
+      await saveGlobalIngestionSchedule(validation.expression);
       return;
     }
 
-    if (step === "source-power-mode") {
+    if (step === "global-power-mode") {
       const selectedMode = POWER_MODE_OPTIONS[powerModeSelectionIndex];
 
       if (selectedMode === "Set up Mac wake/sleep window") {
-        await saveMacPowerWindow();
+        await saveGlobalMacPowerWindow();
         return;
       }
 
-      returnToSourceMenu();
+      setSourceSelectionIndex(0);
+      setSourceState({ secretValues: {} });
+      setInput("");
+      setStep("source-menu");
       return;
     }
 
@@ -999,22 +955,35 @@ export function InitSetup({
   }
 
   async function saveSelectedSourceDescription(description: string) {
-    if (
-      selectedSourceId === "web-search" ||
-      selectedSourceId === "hackernews"
-    ) {
+    const connectorConfig =
+      selectedSourceId === "web-search" || selectedSourceId === "hackernews"
+        ? getStaticSourceConfig(selectedSourceId, description)
+        : sourceState.connectorConfig;
+
+    if (selectedSourceId === "web-search" || selectedSourceId === "hackernews") {
       await configureStaticSource(selectedSourceId, description);
     }
 
-    const nextConfig = updateSourceConfig(onboardingConfig, selectedSourceId, {
-      connectedAt:
-        onboardingConfig.sources[selectedSourceId]?.connectedAt ??
-        new Date().toISOString(),
+    const sourceInstanceId = createSourceInstanceId(
+      selectedSourceId,
+      onboardingConfig,
+    );
+    const sourceInstance = {
+      connectedAt: new Date().toISOString(),
+      connectorConfig,
+      connectorId: selectedSourceId,
+      id: sourceInstanceId,
       ingestionGoal: description.length > 0 ? description : undefined,
-    });
+      name: createSourceInstanceName(selectedSource, description, onboardingConfig),
+    };
+    const nextConfig = addSourceInstanceConfig(onboardingConfig, sourceInstance);
     await saveConfig(nextConfig);
+    setSourceState((state) => ({
+      ...state,
+      connectorConfig,
+    }));
     setInput("");
-    setStep("source-cron-mode");
+    returnToSourceMenu();
   }
 
   type CompleteSetupOptions = {
@@ -1035,6 +1004,12 @@ export function InitSetup({
     if (!onboardingConfig.wikiGoal) {
       setInput(getTemplateGoal(onboardingConfig.templateId));
       setStep("wiki-goal");
+      return;
+    }
+
+    if (!onboardingConfig.ingestionSchedule) {
+      setCronModeSelectionIndex(0);
+      setStep("global-cron-mode");
       return;
     }
 
@@ -1145,14 +1120,6 @@ export function InitSetup({
         await configureAuthProvider(authResult.provider, { force: false });
       }
 
-      const nextConfig = updateSourceConfig(
-        onboardingConfig,
-        selectedSourceId,
-        {
-          connectedAt: new Date().toISOString(),
-        },
-      );
-      await saveConfig(nextConfig);
       setInput("");
       setStep("source-description");
     } catch (authError) {
@@ -1170,9 +1137,11 @@ export function InitSetup({
 
     try {
       if (source.id === "git-repo") {
-        await configureLocalGitRepo();
+        const connectorConfig = await configureLocalGitRepo();
+        setSourceState((state) => ({ ...state, connectorConfig }));
       } else if (source.id === "web-search" || source.id === "hackernews") {
-        await configureStaticSource(source.id);
+        const connectorConfig = await configureStaticSource(source.id);
+        setSourceState((state) => ({ ...state, connectorConfig }));
       }
 
       setStep("source-description");
@@ -1182,22 +1151,26 @@ export function InitSetup({
   }
 
   function returnToSourceMenu() {
-    setSourceSelectionIndex(
-      allSourcesConnected(onboardingConfig, activeSourceOptions)
-        ? activeSourceOptions.length
-        : getNextUnconnectedSourceIndex(onboardingConfig, activeSourceOptions),
-    );
+    setSourceSelectionIndex(activeSourceOptions.length);
     setSourceState({ secretValues: {} });
     setInput("");
     setStep("source-menu");
   }
 
-  async function configureLocalGitRepo() {
+  async function configureLocalGitRepo(): Promise<Record<string, unknown>> {
     const sourceId = "git-repo";
     const repoId = sanitizeRepoId(
       process.cwd().split(/[\\/]/u).pop() ?? "repo",
     );
     const configPath = getConnectorConfigPath(sourceId);
+    const connectorConfig = {
+      repos: [
+        {
+          id: repoId,
+          path: process.cwd(),
+        },
+      ],
+    };
     await import("node:fs/promises").then(({ chmod, mkdir, writeFile }) =>
       mkdir(path.dirname(configPath), {
         recursive: true,
@@ -1205,18 +1178,7 @@ export function InitSetup({
       }).then(async () => {
         await writeFile(
           configPath,
-          `${JSON.stringify(
-            {
-              repos: [
-                {
-                  id: repoId,
-                  path: process.cwd(),
-                },
-              ],
-            },
-            null,
-            2,
-          )}\n`,
+          `${JSON.stringify(connectorConfig, null, 2)}\n`,
           {
             encoding: "utf8",
             mode: 0o600,
@@ -1225,10 +1187,15 @@ export function InitSetup({
         await chmod(configPath, 0o600);
       }),
     );
+    return connectorConfig;
   }
 
-  async function configureStaticSource(sourceId: ConnectorId, query = "") {
+  async function configureStaticSource(
+    sourceId: ConnectorId,
+    query = "",
+  ): Promise<Record<string, unknown>> {
     const configPath = getConnectorConfigPath(sourceId);
+    const connectorConfig = getStaticSourceConfig(sourceId, query);
     await import("node:fs/promises").then(({ chmod, mkdir, writeFile }) =>
       mkdir(path.dirname(configPath), {
         recursive: true,
@@ -1236,7 +1203,7 @@ export function InitSetup({
       }).then(async () => {
         await writeFile(
           configPath,
-          `${JSON.stringify(getStaticSourceConfig(sourceId, query), null, 2)}\n`,
+          `${JSON.stringify(connectorConfig, null, 2)}\n`,
           {
             encoding: "utf8",
             mode: 0o600,
@@ -1245,37 +1212,35 @@ export function InitSetup({
         await chmod(configPath, 0o600);
       }),
     );
+    return connectorConfig;
   }
 
-  async function saveSourceSchedule(cronExpression: string) {
+  async function saveGlobalIngestionSchedule(cronExpression: string) {
     setIsSaving(true);
 
     try {
       const result = await installConnectorSchedule({
-        connectorId: selectedSourceId,
+        connectorId: "git-repo",
         cronExpression,
         cwd: process.cwd(),
       });
-      const nextConfig = updateSourceConfig(
-        onboardingConfig,
-        selectedSourceId,
-        {
-          schedule: {
-            description: result.description,
-            expression: result.expression,
-            launchAgentPath: result.launchAgentPath,
-            updatedAt: new Date().toISOString(),
-            warning: result.warning,
-          },
+      const nextConfig: OpenWikiOnboardingConfig = {
+        ...onboardingConfig,
+        ingestionSchedule: {
+          description: result.description,
+          expression: result.expression,
+          launchAgentPath: result.launchAgentPath,
+          updatedAt: new Date().toISOString(),
+          warning: result.warning,
         },
-      );
+      };
       await saveConfig(nextConfig);
       setSourceState((state) => ({
         ...state,
         savedScheduleWarning: result.warning,
       }));
       setPowerModeSelectionIndex(0);
-      setStep("source-power-mode");
+      setStep("global-power-mode");
     } catch (scheduleError) {
       setError(getErrorMessage(scheduleError));
     } finally {
@@ -1283,15 +1248,16 @@ export function InitSetup({
     }
   }
 
-  async function saveMacPowerWindow() {
+  async function saveGlobalMacPowerWindow() {
     setIsSaving(true);
 
     try {
-      const result = await installOpenWikiPowerSchedule(onboardingConfig);
+      const configForPower = await readOpenWikiOnboardingConfig();
+      const result = await installOpenWikiPowerSchedule(configForPower);
       const nextConfig: OpenWikiOnboardingConfig = {
-        ...onboardingConfig,
+        ...configForPower,
         powerManagement: {
-          ...onboardingConfig.powerManagement,
+          ...configForPower.powerManagement,
           pmset: {
             days: result.days,
             enabled: result.enabled,
@@ -1303,11 +1269,10 @@ export function InitSetup({
         },
       };
       await saveConfig(nextConfig);
-      setSourceState((state) => ({
-        ...state,
-        savedScheduleWarning: result.warning,
-      }));
-      returnToSourceMenu();
+      setSourceSelectionIndex(0);
+      setSourceState({ secretValues: {}, savedScheduleWarning: result.warning });
+      setInput("");
+      setStep("source-menu");
     } catch (powerError) {
       setError(getErrorMessage(powerError));
     } finally {
@@ -1418,6 +1383,21 @@ export function InitSetup({
           }
         />
         <SetupStep
+          label="Schedule"
+          state={
+            onboardingConfig.ingestionSchedule
+              ? "done"
+              : isScheduleStep(step)
+                ? "current"
+                : "pending"
+          }
+          detail={
+            onboardingConfig.ingestionSchedule
+              ? onboardingConfig.ingestionSchedule.description
+              : "choose one time for all ingestion"
+          }
+        />
+        <SetupStep
           label="Sources"
           state={
             getConnectedSourceCount(onboardingConfig, activeSourceOptions) > 0
@@ -1429,7 +1409,7 @@ export function InitSetup({
           detail={`${getConnectedSourceCount(
             onboardingConfig,
             activeSourceOptions,
-          )}/${activeSourceOptions.length} configured`}
+          )} setup(s) configured`}
         />
       </Box>
 
@@ -1649,13 +1629,10 @@ function Prompt({
       <Box flexDirection="column">
         <Text>Choose a starting point for this wiki.</Text>
         {ONBOARDING_TEMPLATES.map((template, index) => (
-          <React.Fragment key={template.id}>
-            {index === 1 ? <Text color="gray">Templates</Text> : null}
-            <Text>
-              <SelectionMarker isSelected={index === templateSelectionIndex} />{" "}
-              {template.name}
-            </Text>
-          </React.Fragment>
+          <Text key={template.id}>
+            <SelectionMarker isSelected={index === templateSelectionIndex} />{" "}
+            {template.name}
+          </Text>
         ))}
         <Box flexDirection="column" marginTop={1}>
           <Text bold>{selectedTemplate.name}</Text>
@@ -1698,7 +1675,7 @@ function Prompt({
   }
 
   if (step === "source-menu") {
-    const allConnected = allSourcesConnected(onboardingConfig, sourceOptions);
+    const configuredCount = getConnectedSourceCount(onboardingConfig, sourceOptions);
 
     return (
       <Box flexDirection="column">
@@ -1708,9 +1685,8 @@ function Prompt({
             <SelectionMarker isSelected={index === sourceSelectionIndex} />{" "}
             {source.displayName}{" "}
             <SourceConnectionStatus
-              isConfigured={Boolean(
-                onboardingConfig.sources[source.id]?.connectedAt,
-              )}
+              count={getSourceInstanceCount(onboardingConfig, source.id)}
+              isConfigured={getSourceInstanceCount(onboardingConfig, source.id) > 0}
             />
           </Text>
         ))}
@@ -1721,8 +1697,8 @@ function Prompt({
               isSelected={sourceSelectionIndex === sourceOptions.length}
             />{" "}
             Continue{" "}
-            {!allConnected ? (
-              <Text color="gray">(some sources missing)</Text>
+            {configuredCount === 0 ? (
+              <Text color="gray">(no sources configured)</Text>
             ) : null}
           </Text>
         </Box>
@@ -1826,10 +1802,11 @@ function Prompt({
     );
   }
 
-  if (step === "source-cron-mode") {
+  if (step === "global-cron-mode") {
     return (
       <Box flexDirection="column">
-        <Text>When should OpenWiki refresh {selectedSource.displayName}?</Text>
+        <Text>When should OpenWiki run all ingestion?</Text>
+        <Text color="gray">All configured sources run sequentially at this time.</Text>
         <Text color="gray">Suggested: {suggestedCronDescription}</Text>
         {CRON_MODE_OPTIONS.map((option, index) => (
           <Text key={option}>
@@ -1842,11 +1819,11 @@ function Prompt({
     );
   }
 
-  if (step === "source-cron-custom") {
+  if (step === "global-cron-custom") {
     const validation = validateCronExpression(input);
     return (
       <Box flexDirection="column">
-        <Text>Enter a cron schedule for {selectedSource.displayName}.</Text>
+        <Text>Enter one cron schedule for all ingestion.</Text>
         <SegmentedCronInput
           activeFieldIndex={cronFieldSelectionIndex}
           expression={input}
@@ -1869,13 +1846,13 @@ function Prompt({
     );
   }
 
-  if (step === "source-power-mode") {
+  if (step === "global-power-mode") {
     return (
       <Box flexDirection="column">
         <Text>Keep your Mac awake for scheduled refreshes?</Text>
         <Text color="gray">
-          OpenWiki can use macOS pmset to wake 2 minutes before the earliest
-          saved source schedule and sleep 30 minutes after the latest one.
+          OpenWiki can use macOS pmset to wake 2 minutes before the shared
+          ingestion schedule and sleep 30 minutes after it.
         </Text>
         {sourceState.savedScheduleWarning ? (
           <Text color="yellow">{sourceState.savedScheduleWarning}</Text>
@@ -1898,7 +1875,7 @@ function Prompt({
 
   if (step === "source-confirm-continue") {
     const missingSources = sourceOptions.filter(
-      (source) => !onboardingConfig.sources[source.id]?.connectedAt,
+      (source) => getSourceInstanceCount(onboardingConfig, source.id) === 0,
     );
     return (
       <Box flexDirection="column">
@@ -2019,10 +1996,18 @@ function SelectionMarker({ isSelected }: { isSelected: boolean }) {
   );
 }
 
-function SourceConnectionStatus({ isConfigured }: { isConfigured: boolean }) {
+function SourceConnectionStatus({
+  count,
+  isConfigured,
+}: {
+  count: number;
+  isConfigured: boolean;
+}) {
   return (
     <Text color={isConfigured ? "green" : "gray"}>
-      {isConfigured ? "[configured]" : "[not configured]"}
+      {isConfigured
+        ? `[configured${count > 1 ? ` x${count}` : ""}]`
+        : "[not configured]"}
     </Text>
   );
 }
@@ -2265,6 +2250,10 @@ function getInitialStep(
     return "wiki-goal";
   }
 
+  if (!onboardingConfig.ingestionSchedule) {
+    return "global-cron-mode";
+  }
+
   if (!isOnboardingComplete(onboardingConfig)) {
     return "source-menu";
   }
@@ -2308,6 +2297,10 @@ function getNextStepAfterApiKey(
     return "wiki-goal";
   }
 
+  if (!onboardingConfig.ingestionSchedule) {
+    return "global-cron-mode";
+  }
+
   if (!isOnboardingComplete(onboardingConfig)) {
     return "source-menu";
   }
@@ -2325,56 +2318,80 @@ function needsEnvValue(secretInput: SourceSecretInput): boolean {
   return !process.env[secretInput.envKey];
 }
 
-function updateSourceConfig(
+function addSourceInstanceConfig(
   config: OpenWikiOnboardingConfig,
-  sourceId: ConnectorId,
-  updates: Partial<
-    NonNullable<OpenWikiOnboardingConfig["sources"][ConnectorId]>
-  >,
+  sourceInstance: OpenWikiOnboardingConfig["sourceInstances"][number],
 ): OpenWikiOnboardingConfig {
+  const sourceInstances = [...config.sourceInstances, sourceInstance];
   return {
     ...config,
-    sources: {
-      ...config.sources,
-      [sourceId]: {
-        ...(config.sources[sourceId] ?? {}),
-        ...updates,
-      },
-    },
+    sourceInstances,
+    sources: deriveLegacySources(sourceInstances),
   };
 }
 
-function allSourcesConnected(
+function deriveLegacySources(
+  sourceInstances: OpenWikiOnboardingConfig["sourceInstances"],
+): OpenWikiOnboardingConfig["sources"] {
+  const sources: OpenWikiOnboardingConfig["sources"] = {};
+
+  for (const sourceInstance of sourceInstances) {
+    if (!sources[sourceInstance.connectorId]) {
+      sources[sourceInstance.connectorId] = {
+        connectedAt: sourceInstance.connectedAt,
+        connectorConfig: sourceInstance.connectorConfig,
+        ingestionGoal: sourceInstance.ingestionGoal,
+      };
+    }
+  }
+
+  return sources;
+}
+
+function getSourceInstanceCount(
   config: OpenWikiOnboardingConfig,
-  sourceOptions: readonly SourceSetupOption[],
-): boolean {
-  return sourceOptions.every(
-    (source) => config.sources[source.id]?.connectedAt,
-  );
+  sourceId: ConnectorId,
+): number {
+  return config.sourceInstances.filter(
+    (sourceInstance) => sourceInstance.connectorId === sourceId,
+  ).length;
 }
 
 function getConnectedSourceCount(
   config: OpenWikiOnboardingConfig,
   sourceOptions: readonly SourceSetupOption[],
 ): number {
-  return sourceOptions.filter(
-    (source) => config.sources[source.id]?.connectedAt,
+  const sourceIds = new Set(sourceOptions.map((source) => source.id));
+  return config.sourceInstances.filter((sourceInstance) =>
+    sourceIds.has(sourceInstance.connectorId),
   ).length;
 }
 
-function getNextUnconnectedSourceIndex(
+function createSourceInstanceId(
+  sourceId: ConnectorId,
   config: OpenWikiOnboardingConfig,
-  sourceOptions: readonly SourceSetupOption[],
-): number {
-  const index = sourceOptions.findIndex(
-    (source) => !config.sources[source.id]?.connectedAt,
-  );
+): string {
+  const sourceCount = getSourceInstanceCount(config, sourceId) + 1;
+  return `${sourceId}-${sourceCount}`;
+}
 
-  return index === -1 ? 0 : index;
+function createSourceInstanceName(
+  source: SourceSetupOption,
+  description: string,
+  config: OpenWikiOnboardingConfig,
+): string {
+  const sourceCount = getSourceInstanceCount(config, source.id) + 1;
+  const trimmedDescription = description.trim();
+  const suffix = trimmedDescription.length > 0 ? `: ${trimmedDescription}` : "";
+  return `${source.displayName} ${sourceCount}${suffix}`.slice(0, 120);
 }
 
 function isSourceStep(step: PromptStep | null): boolean {
   return Boolean(step?.startsWith("source-"));
+}
+
+function isScheduleStep(step: PromptStep | null): boolean {
+  return Boolean(step?.startsWith("global-"));
 }
 
 function getProviderSetupDetail(provider: OpenWikiProvider): string {

@@ -1,0 +1,6 @@
+{
+  "feeds": [
+    "https://hnrss.org/frontpage"
+  ],
+  "limit": 10
+}

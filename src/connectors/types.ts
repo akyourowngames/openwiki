@@ -20,6 +20,8 @@ export type ConnectorDefinition = {
 };
 
 export type ConnectorIngestOptions = {
+  connectorConfig?: Record<string, unknown>;
+  instanceId?: string;
   limit?: number;
   streams?: string[];
   windowHours?: number;

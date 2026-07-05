@@ -40,6 +40,7 @@ export type CliCommand =
       exitCode: 0;
       modelId: string | null;
       print: boolean;
+      scheduledOnly: boolean;
       target: IngestionTarget;
     }
   | {
@@ -204,12 +205,18 @@ export function parseCommand(argv: string[]): CliCommand {
 
     let modelId: string | null = null;
     let print = false;
+    let scheduledOnly = false;
     const optionArgs = argv.slice(2);
     for (let index = 0; index < optionArgs.length; index += 1) {
       const arg = optionArgs[index];
 
       if (arg === "--print" || arg === "-p") {
         print = true;
+        continue;
+      }
+
+      if (arg === "--scheduled") {
+        scheduledOnly = true;
         continue;
       }
 
@@ -264,6 +271,7 @@ export function parseCommand(argv: string[]): CliCommand {
       exitCode: 0,
       modelId,
       print,
+      scheduledOnly,
       target,
     };
   }

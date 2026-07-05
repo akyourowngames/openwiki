@@ -1038,7 +1038,7 @@ function IngestionSummary({ result }: { result: OpenWikiIngestionResult }) {
     <Panel title="Source Runs">
       {result.results.map((sourceResult) => (
         <StatusLine
-          key={sourceResult.connectorId}
+          key={sourceResult.sourceInstanceId}
           label={sourceResult.displayName}
           tone={sourceResult.status === "error" ? "error" : "success"}
           value={`${sourceResult.status}; ${sourceResult.rawFiles.length} raw file(s)`}
@@ -3636,11 +3636,13 @@ function formatScheduleStatus(schedule: ConnectorScheduleStatus): string {
   const body = rows
     .map(([label, value]) => `  ${label.padEnd(labelWidth)} : ${value}`)
     .join("\n");
-  const divider = "-".repeat(Math.max(18, schedule.connectorId.length + 12));
+  const scheduleLabel = schedule.displayName ?? schedule.sourceInstanceId;
+  const divider = "-".repeat(Math.max(18, scheduleLabel.length + 10));
 
   return [
     divider,
-    `Connector : ${schedule.connectorId}`,
+    `Source : ${scheduleLabel}`,
+    ...(schedule.connectorId ? [`Connector : ${schedule.connectorId}`] : []),
     divider,
     body,
     "",
@@ -3654,6 +3656,7 @@ async function runIngestCommand(
     const result = await runOpenWikiIngestion(process.cwd(), {
       debug: isDebugMode(),
       modelId: command.modelId,
+      scheduledOnly: command.scheduledOnly,
       target: command.target,
       onEvent: (event) => {
         if (event.type === "text" && event.source !== "subgraph") {

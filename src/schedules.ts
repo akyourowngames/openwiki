@@ -7,10 +7,7 @@ import { CronExpressionParser } from "cron-parser";
 import cronstrue from "cronstrue";
 import { ensureOpenWikiHome, openWikiHomeDir } from "./openwiki-home.js";
 import type { ConnectorId } from "./connectors/types.js";
-import type {
-  OnboardingSourceConfig,
-  OpenWikiOnboardingConfig,
-} from "./onboarding.js";
+import type { OpenWikiOnboardingConfig } from "./onboarding.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_FIRST_HOUR = 2;
@@ -35,13 +32,15 @@ export type ScheduleInstallResult = {
 };
 
 export type ConnectorScheduleStatus = {
-  connectorId: ConnectorId;
+  connectorId?: ConnectorId;
   description: string;
+  displayName?: string;
   expression: string;
   launchAgentLoaded: boolean;
   launchAgentPath?: string;
   launchAgentPlistExists: boolean;
   pausedAt?: string;
+  sourceInstanceId: string;
   updatedAt: string;
   warning?: string;
 };
@@ -60,9 +59,9 @@ export type PowerScheduleStatus = PowerScheduleInstallResult & {
 
 export type ScheduleMutationResult = {
   config: OpenWikiOnboardingConfig;
-  connectorIds: ConnectorId[];
+  connectorIds: string[];
   powerSchedule?: PowerScheduleInstallResult;
-  skippedConnectorIds: ConnectorId[];
+  skippedConnectorIds: string[];
   warnings: string[];
 };
 
@@ -120,31 +119,7 @@ export function describeCronExpression(expression: string): string {
 export function getSuggestedCronExpression(
   config: OpenWikiOnboardingConfig,
 ): string {
-  const usedHours = new Set<number>();
-
-  for (const sourceConfig of Object.values(config.sources)) {
-    const scheduleExpression = sourceConfig?.schedule?.expression;
-    if (!scheduleExpression) {
-      continue;
-    }
-
-    const hour = getSingleCronNumber(scheduleExpression.split(/\s+/u)[1], {
-      max: 23,
-      min: 0,
-    });
-    if (hour !== null) {
-      usedHours.add(hour);
-    }
-  }
-
-  for (let offset = 0; offset < 24; offset += 1) {
-    const hour = (DEFAULT_FIRST_HOUR + offset) % 24;
-    if (!usedHours.has(hour)) {
-      return `0 ${hour} * * *`;
-    }
-  }
-
-  return `0 ${DEFAULT_FIRST_HOUR} * * *`;
+  return config.ingestionSchedule?.expression ?? `0 ${DEFAULT_FIRST_HOUR} * * *`;
 }
 
 export async function installConnectorSchedule({
@@ -181,10 +156,11 @@ export async function installConnectorSchedule({
     };
   }
 
-  const label = getLaunchAgentLabel(connectorId);
+  void connectorId;
+  const label = getLaunchAgentLabel();
   const launchAgentsDir = getLaunchAgentsDir();
   const logsDir = path.join(openWikiHomeDir, "logs");
-  const plistPath = getLaunchAgentPath(connectorId);
+  const plistPath = getLaunchAgentPath();
 
   await ensureOpenWikiHome();
   await mkdir(launchAgentsDir, { recursive: true, mode: 0o700 });
@@ -193,10 +169,9 @@ export async function installConnectorSchedule({
     plistPath,
     createLaunchAgentPlist({
       calendarInterval,
-      connectorId,
       cwd,
       label,
-      logPath: path.join(logsDir, `${connectorId}.schedule.log`),
+      logPath: path.join(logsDir, "ingestion.schedule.log"),
     }),
     {
       encoding: "utf8",
@@ -205,7 +180,7 @@ export async function installConnectorSchedule({
   );
   await chmod(plistPath, 0o600);
 
-  await unloadLaunchAgent(connectorId);
+  await unloadLaunchAgent();
   const launchdDomain = getLaunchdDomain();
   await execFileAsync("launchctl", ["bootstrap", launchdDomain, plistPath]);
 
@@ -219,66 +194,60 @@ export async function installConnectorSchedule({
 export async function listConnectorSchedules(
   config: OpenWikiOnboardingConfig,
 ): Promise<ConnectorScheduleStatus[]> {
-  const schedules: ConnectorScheduleStatus[] = [];
+  const schedule = config.ingestionSchedule;
+  if (!schedule) {
+    return [];
+  }
 
-  for (const [connectorId, sourceConfig] of Object.entries(config.sources)) {
-    if (!isKnownConnectorId(connectorId) || !sourceConfig?.schedule) {
-      continue;
-    }
-
-    const launchAgentPath = sourceConfig.schedule.launchAgentPath;
-    schedules.push({
-      connectorId,
-      description: sourceConfig.schedule.description,
-      expression: sourceConfig.schedule.expression,
-      launchAgentLoaded: sourceConfig.schedule.pausedAt
-        ? false
-        : await isLaunchAgentLoaded(connectorId),
+  const launchAgentPath = schedule.launchAgentPath;
+  return [
+    {
+      description: schedule.description,
+      displayName: "All ingestion",
+      expression: schedule.expression,
+      launchAgentLoaded: schedule.pausedAt ? false : await isLaunchAgentLoaded(),
       launchAgentPath,
       launchAgentPlistExists: launchAgentPath
         ? await pathExists(launchAgentPath)
         : false,
-      pausedAt: sourceConfig.schedule.pausedAt,
-      updatedAt: sourceConfig.schedule.updatedAt,
-      warning: sourceConfig.schedule.warning,
-    });
-  }
-
-  return schedules;
+      pausedAt: schedule.pausedAt,
+      sourceInstanceId: "all",
+      updatedAt: schedule.updatedAt,
+      warning: schedule.warning,
+    },
+  ];
 }
 
 export async function pauseConnectorSchedules(
   config: OpenWikiOnboardingConfig,
   target: ScheduleTarget,
 ): Promise<ScheduleMutationResult> {
-  const connectorIds = getScheduledConnectorIds(config, target);
-  const changedConnectorIds: ConnectorId[] = [];
-  const skippedConnectorIds: ConnectorId[] = [];
+  if (target !== "all" || !config.ingestionSchedule || config.ingestionSchedule.pausedAt) {
+    return {
+      config,
+      connectorIds: [],
+      skippedConnectorIds: [target],
+      warnings: [],
+    };
+  }
+
   let nextConfig = cloneOnboardingConfig(config);
-
-  for (const connectorId of connectorIds) {
-    const sourceConfig = nextConfig.sources[connectorId];
-    const schedule = sourceConfig?.schedule;
-    if (!sourceConfig || !schedule || schedule.pausedAt) {
-      skippedConnectorIds.push(connectorId);
-      continue;
-    }
-
-    await unloadLaunchAgent(connectorId);
-    nextConfig = setSourceSchedule(nextConfig, connectorId, {
-      ...schedule,
+  nextConfig = {
+    ...nextConfig,
+    ingestionSchedule: {
+      ...config.ingestionSchedule,
       pausedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    });
-    changedConnectorIds.push(connectorId);
-  }
+    },
+  };
+  await unloadLaunchAgent();
 
   const reconciled = await reconcileOpenWikiPowerSchedule(nextConfig);
   return {
     config: reconciled.config,
-    connectorIds: changedConnectorIds,
+    connectorIds: ["all"],
     powerSchedule: reconciled.powerSchedule,
-    skippedConnectorIds,
+    skippedConnectorIds: [],
     warnings: reconciled.powerSchedule?.warning
       ? [reconciled.powerSchedule.warning]
       : [],
@@ -294,46 +263,39 @@ export async function resumeConnectorSchedules({
   cwd: string;
   target: ScheduleTarget;
 }): Promise<ScheduleMutationResult> {
-  const connectorIds = getScheduledConnectorIds(config, target);
-  const changedConnectorIds: ConnectorId[] = [];
-  const skippedConnectorIds: ConnectorId[] = [];
-  const warnings: string[] = [];
-  let nextConfig = cloneOnboardingConfig(config);
+  if (target !== "all" || !config.ingestionSchedule || !config.ingestionSchedule.pausedAt) {
+    return {
+      config,
+      connectorIds: [],
+      skippedConnectorIds: [target],
+      warnings: [],
+    };
+  }
 
-  for (const connectorId of connectorIds) {
-    const sourceConfig = nextConfig.sources[connectorId];
-    const schedule = sourceConfig?.schedule;
-    if (!sourceConfig || !schedule || !schedule.pausedAt) {
-      skippedConnectorIds.push(connectorId);
-      continue;
-    }
-
-    const result = await installConnectorSchedule({
-      connectorId,
-      cronExpression: schedule.expression,
-      cwd,
-    });
-    nextConfig = setSourceSchedule(nextConfig, connectorId, {
+  const result = await installConnectorSchedule({
+    connectorId: "git-repo",
+    cronExpression: config.ingestionSchedule.expression,
+    cwd,
+  });
+  const nextConfig = {
+    ...cloneOnboardingConfig(config),
+    ingestionSchedule: {
       description: result.description,
       expression: result.expression,
       launchAgentPath: result.launchAgentPath,
       updatedAt: new Date().toISOString(),
       warning: result.warning,
-    });
-    if (result.warning) {
-      warnings.push(`${connectorId}: ${result.warning}`);
-    }
-    changedConnectorIds.push(connectorId);
-  }
+    },
+  };
 
   const reconciled = await reconcileOpenWikiPowerSchedule(nextConfig);
   return {
     config: reconciled.config,
-    connectorIds: changedConnectorIds,
+    connectorIds: ["all"],
     powerSchedule: reconciled.powerSchedule,
-    skippedConnectorIds,
+    skippedConnectorIds: [],
     warnings: [
-      ...warnings,
+      ...(result.warning ? [result.warning] : []),
       ...(reconciled.powerSchedule?.warning
         ? [reconciled.powerSchedule.warning]
         : []),
@@ -345,31 +307,26 @@ export async function deleteConnectorSchedules(
   config: OpenWikiOnboardingConfig,
   target: ScheduleTarget,
 ): Promise<ScheduleMutationResult> {
-  const connectorIds = getScheduledConnectorIds(config, target);
-  const changedConnectorIds: ConnectorId[] = [];
-  const skippedConnectorIds: ConnectorId[] = [];
-  let nextConfig = cloneOnboardingConfig(config);
-
-  for (const connectorId of connectorIds) {
-    const sourceConfig = nextConfig.sources[connectorId];
-    const schedule = sourceConfig?.schedule;
-    if (!sourceConfig || !schedule) {
-      skippedConnectorIds.push(connectorId);
-      continue;
-    }
-
-    await unloadLaunchAgent(connectorId);
-    await removeLaunchAgentPlist(connectorId);
-    nextConfig = setSourceSchedule(nextConfig, connectorId, undefined);
-    changedConnectorIds.push(connectorId);
+  if (target !== "all" || !config.ingestionSchedule) {
+    return {
+      config,
+      connectorIds: [],
+      skippedConnectorIds: [target],
+      warnings: [],
+    };
   }
+
+  const nextConfig = cloneOnboardingConfig(config);
+  delete nextConfig.ingestionSchedule;
+  await unloadLaunchAgent();
+  await removeLaunchAgentPlist();
 
   const reconciled = await reconcileOpenWikiPowerSchedule(nextConfig);
   return {
     config: reconciled.config,
-    connectorIds: changedConnectorIds,
+    connectorIds: ["all"],
     powerSchedule: reconciled.powerSchedule,
-    skippedConnectorIds,
+    skippedConnectorIds: [],
     warnings: reconciled.powerSchedule?.warning
       ? [reconciled.powerSchedule.warning]
       : [],
@@ -463,11 +420,7 @@ async function reconcileOpenWikiPowerSchedule(
     return { config };
   }
 
-  const hasActiveSchedule = Object.values(config.sources).some(
-    (sourceConfig) => sourceConfig?.schedule && !sourceConfig.schedule.pausedAt,
-  );
-
-  if (!hasActiveSchedule) {
+  if (!hasActiveIngestionSchedule(config)) {
     if (!savedPmset.enabled) {
       return { config };
     }
@@ -547,51 +500,25 @@ async function cancelOpenWikiPowerSchedule(): Promise<PowerScheduleInstallResult
   }
 }
 
-function getScheduledConnectorIds(
-  config: OpenWikiOnboardingConfig,
-  target: ScheduleTarget,
-): ConnectorId[] {
-  if (target !== "all") {
-    return [target];
-  }
-
-  return Object.entries(config.sources)
-    .filter(
-      (entry): entry is [ConnectorId, OnboardingSourceConfig] =>
-        isKnownConnectorId(entry[0]) && Boolean(entry[1]?.schedule),
-    )
-    .map(([connectorId]) => connectorId);
-}
-
-function setSourceSchedule(
-  config: OpenWikiOnboardingConfig,
-  connectorId: ConnectorId,
-  schedule: OnboardingSourceConfig["schedule"],
-): OpenWikiOnboardingConfig {
-  const sourceConfig = config.sources[connectorId] ?? {};
-  const nextSourceConfig: OnboardingSourceConfig = {
-    ...sourceConfig,
-    ...(schedule ? { schedule } : {}),
-  };
-
-  if (!schedule) {
-    delete nextSourceConfig.schedule;
-  }
-
-  return {
-    ...config,
-    sources: {
-      ...config.sources,
-      [connectorId]: nextSourceConfig,
-    },
-  };
+function hasActiveIngestionSchedule(config: OpenWikiOnboardingConfig): boolean {
+  return Boolean(config.ingestionSchedule && !config.ingestionSchedule.pausedAt);
 }
 
 function cloneOnboardingConfig(
   config: OpenWikiOnboardingConfig,
 ): OpenWikiOnboardingConfig {
+  const sourceInstances = config.sourceInstances.map((sourceConfig) => ({
+    ...sourceConfig,
+    connectorConfig: sourceConfig.connectorConfig
+      ? { ...sourceConfig.connectorConfig }
+      : undefined,
+  }));
+
   return {
     ...config,
+    ingestionSchedule: config.ingestionSchedule
+      ? { ...config.ingestionSchedule }
+      : undefined,
     powerManagement: config.powerManagement
       ? {
           ...config.powerManagement,
@@ -600,20 +527,27 @@ function cloneOnboardingConfig(
             : undefined,
         }
       : undefined,
-    sources: Object.fromEntries(
-      Object.entries(config.sources).map(([connectorId, sourceConfig]) => [
-        connectorId,
-        sourceConfig
-          ? {
-              ...sourceConfig,
-              schedule: sourceConfig.schedule
-                ? { ...sourceConfig.schedule }
-                : undefined,
-            }
-          : undefined,
-      ]),
-    ) as OpenWikiOnboardingConfig["sources"],
+    sourceInstances,
+    sources: deriveLegacySources(sourceInstances),
   };
+}
+
+function deriveLegacySources(
+  sourceInstances: OpenWikiOnboardingConfig["sourceInstances"],
+): OpenWikiOnboardingConfig["sources"] {
+  const sources: OpenWikiOnboardingConfig["sources"] = {};
+
+  for (const sourceConfig of sourceInstances) {
+    if (!sources[sourceConfig.connectorId]) {
+      sources[sourceConfig.connectorId] = {
+        connectedAt: sourceConfig.connectedAt,
+        connectorConfig: sourceConfig.connectorConfig,
+        ingestionGoal: sourceConfig.ingestionGoal,
+      };
+    }
+  }
+
+  return sources;
 }
 
 function normalizeCronExpression(expression: string): string {
@@ -696,18 +630,10 @@ function getPowerWindowForConfiguredSchedules(
   config: OpenWikiOnboardingConfig,
 ): Omit<PowerScheduleInstallResult, "enabled" | "warning"> | null {
   const parsedSchedules: RepeatScheduleTime[] = [];
+  const schedule = config.ingestionSchedule;
 
-  for (const sourceConfig of Object.values(config.sources)) {
-    if (sourceConfig?.schedule?.pausedAt) {
-      continue;
-    }
-
-    const expression = sourceConfig?.schedule?.expression;
-    if (!expression) {
-      continue;
-    }
-
-    const parsedSchedule = parseRepeatScheduleTime(expression);
+  if (schedule && !schedule.pausedAt) {
+    const parsedSchedule = parseRepeatScheduleTime(schedule.expression);
     if (parsedSchedule) {
       parsedSchedules.push(parsedSchedule);
     }
@@ -845,13 +771,11 @@ function getSingleCronNumber(
 
 function createLaunchAgentPlist({
   calendarInterval,
-  connectorId,
   cwd,
   label,
   logPath,
 }: {
   calendarInterval: CalendarInterval;
-  connectorId: ConnectorId;
   cwd: string;
   label: string;
   logPath: string;
@@ -861,7 +785,8 @@ function createLaunchAgentPlist({
     process.execPath,
     cliPath,
     "ingest",
-    connectorId,
+    "all",
+    "--scheduled",
     "--print",
   ];
 
@@ -895,46 +820,39 @@ ${Object.entries(calendarInterval)
 `;
 }
 
-function toSafeLaunchdName(value: string): string {
-  return value.replace(/[^a-z0-9-]/giu, "-").toLowerCase();
-}
-
 function getLaunchdDomain(): string {
   return `gui/${process.getuid?.() ?? os.userInfo().uid}`;
 }
 
-function getLaunchAgentLabel(connectorId: ConnectorId): string {
-  return `com.openwiki.${toSafeLaunchdName(connectorId)}`;
+function getLaunchAgentLabel(): string {
+  return "com.openwiki.ingestion";
 }
 
 function getLaunchAgentsDir(): string {
   return path.join(os.homedir(), "Library", "LaunchAgents");
 }
 
-function getLaunchAgentPath(connectorId: ConnectorId): string {
-  return path.join(
-    getLaunchAgentsDir(),
-    `${getLaunchAgentLabel(connectorId)}.plist`,
-  );
+function getLaunchAgentPath(): string {
+  return path.join(getLaunchAgentsDir(), `${getLaunchAgentLabel()}.plist`);
 }
 
-async function unloadLaunchAgent(connectorId: ConnectorId): Promise<void> {
+async function unloadLaunchAgent(): Promise<void> {
   if (process.platform !== "darwin") {
     return;
   }
 
   await execFileAsync("launchctl", [
     "bootout",
-    `${getLaunchdDomain()}/${getLaunchAgentLabel(connectorId)}`,
+    `${getLaunchdDomain()}/${getLaunchAgentLabel()}`,
   ]).catch(() => null);
 }
 
-async function removeLaunchAgentPlist(connectorId: ConnectorId): Promise<void> {
+async function removeLaunchAgentPlist(): Promise<void> {
   if (process.platform !== "darwin") {
     return;
   }
 
-  await unlink(getLaunchAgentPath(connectorId)).catch((error: unknown) => {
+  await unlink(getLaunchAgentPath()).catch((error: unknown) => {
     if (isFileNotFoundError(error)) {
       return;
     }
@@ -943,7 +861,7 @@ async function removeLaunchAgentPlist(connectorId: ConnectorId): Promise<void> {
   });
 }
 
-async function isLaunchAgentLoaded(connectorId: ConnectorId): Promise<boolean> {
+async function isLaunchAgentLoaded(): Promise<boolean> {
   if (process.platform !== "darwin") {
     return false;
   }
@@ -951,7 +869,7 @@ async function isLaunchAgentLoaded(connectorId: ConnectorId): Promise<boolean> {
   try {
     await execFileAsync("launchctl", [
       "print",
-      `${getLaunchdDomain()}/${getLaunchAgentLabel(connectorId)}`,
+      `${getLaunchdDomain()}/${getLaunchAgentLabel()}`,
     ]);
     return true;
   } catch {
@@ -966,18 +884,6 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function isKnownConnectorId(value: string): value is ConnectorId {
-  return (
-    value === "git-repo" ||
-    value === "google" ||
-    value === "hackernews" ||
-    value === "notion" ||
-    value === "slack" ||
-    value === "web-search" ||
-    value === "x"
-  );
 }
 
 function isFileNotFoundError(error: unknown): boolean {

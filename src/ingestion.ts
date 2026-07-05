@@ -10,7 +10,7 @@ import type {
 import { loadOpenWikiEnv } from "./env.js";
 import {
   readOpenWikiOnboardingConfig,
-  type OnboardingSourceConfig,
+  type OnboardingSourceInstanceConfig,
   type OpenWikiOnboardingConfig,
 } from "./onboarding.js";
 import {
@@ -35,6 +35,7 @@ export type SourceIngestionResult = {
   deterministicPull?: ConnectorIngestResult;
   displayName: string;
   rawFiles: string[];
+  sourceInstanceId: string;
   status: "agent-updated" | "error" | "skipped";
 };
 
@@ -46,6 +47,7 @@ export type OpenWikiIngestionOptions = Pick<
   OpenWikiRunOptions,
   "debug" | "modelId" | "onEvent"
 > & {
+  scheduledOnly?: boolean;
   target: IngestionTarget;
 };
 
@@ -58,22 +60,13 @@ export async function runOpenWikiIngestion(
   await ensureOpenWikiHome();
   const config = await readOpenWikiOnboardingConfig();
   const registry = createConnectorRegistry();
-  const connectorIds = resolveIngestionConnectorIds(options.target, config);
+  const sourceInstances = resolveIngestionSourceInstances(options.target, config, {
+    scheduledOnly: options.scheduledOnly ?? false,
+  });
   const results: SourceIngestionResult[] = [];
 
-  for (const connectorId of connectorIds) {
-    const connector = registry[connectorId];
-    const sourceConfig = config.sources[connectorId];
-
-    if (!sourceConfig) {
-      results.push({
-        connectorId,
-        displayName: connector.displayName,
-        rawFiles: [],
-        status: "skipped",
-      });
-      continue;
-    }
+  for (const sourceConfig of sourceInstances) {
+    const connector = registry[sourceConfig.connectorId];
 
     results.push(
       await runSourceIngestion({
@@ -111,13 +104,17 @@ async function runSourceIngestion({
   cwd: string;
   emit?: (event: OpenWikiRunEvent) => void;
   modelId?: string | null;
-  sourceConfig: OnboardingSourceConfig;
+  sourceConfig: OnboardingSourceInstanceConfig;
 }): Promise<SourceIngestionResult> {
-  emitText(emit, `\nStarting ${connector.displayName} ingestion.\n`);
+  emitText(emit, `\nStarting ${getSourceDisplayName(connector, sourceConfig)} ingestion.\n`);
 
   try {
     const deterministicPull = isDeterministicConnector(connector)
-      ? await connector.ingest({ windowHours: INGESTION_WINDOW_HOURS })
+      ? await connector.ingest({
+          connectorConfig: sourceConfig.connectorConfig,
+          instanceId: sourceConfig.id,
+          windowHours: INGESTION_WINDOW_HOURS,
+        })
       : undefined;
     const rawFiles = deterministicPull?.rawFiles ?? [];
 
@@ -133,8 +130,9 @@ async function runSourceIngestion({
       return {
         connectorId: connector.id,
         deterministicPull,
-        displayName: connector.displayName,
+        displayName: getSourceDisplayName(connector, sourceConfig),
         rawFiles,
+        sourceInstanceId: sourceConfig.id,
         status: "error",
       };
     }
@@ -160,8 +158,9 @@ async function runSourceIngestion({
       agentResult,
       connectorId: connector.id,
       deterministicPull,
-      displayName: connector.displayName,
+      displayName: getSourceDisplayName(connector, sourceConfig),
       rawFiles,
+      sourceInstanceId: sourceConfig.id,
       status: "agent-updated",
     };
   } catch (error) {
@@ -169,25 +168,37 @@ async function runSourceIngestion({
     emitText(emit, `${connector.displayName} ingestion failed: ${message}\n`);
     return {
       connectorId: connector.id,
-      displayName: connector.displayName,
+      displayName: getSourceDisplayName(connector, sourceConfig),
       rawFiles: [],
+      sourceInstanceId: sourceConfig.id,
       status: "error",
     };
   }
 }
 
-function resolveIngestionConnectorIds(
+function resolveIngestionSourceInstances(
   target: IngestionTarget,
   config: OpenWikiOnboardingConfig,
-): ConnectorId[] {
-  if (target !== "all") {
-    return [target];
-  }
+  { scheduledOnly }: { scheduledOnly: boolean },
+): OnboardingSourceInstanceConfig[] {
+  return config.sourceInstances.filter((sourceConfig) => {
+    if (!sourceConfig.connectedAt || !isConnectorId(sourceConfig.connectorId)) {
+      return false;
+    }
 
-  return Object.entries(config.sources)
-    .filter(([, sourceConfig]) => Boolean(sourceConfig?.connectedAt))
-    .map(([connectorId]) => connectorId)
-    .filter(isConnectorId);
+    if (scheduledOnly && (!config.ingestionSchedule || config.ingestionSchedule.pausedAt)) {
+      return false;
+    }
+
+    return target === "all" || sourceConfig.connectorId === target;
+  });
+}
+
+function getSourceDisplayName(
+  connector: ConnectorRuntime,
+  sourceConfig: OnboardingSourceInstanceConfig,
+): string {
+  return sourceConfig.name ?? connector.displayName;
 }
 
 function isDeterministicConnector(connector: ConnectorRuntime): boolean {
@@ -205,17 +216,18 @@ function createSourceUpdateMessage({
   connector: ConnectorRuntime;
   deterministicPull: ConnectorIngestResult | undefined;
   rawFiles: string[];
-  sourceConfig: OnboardingSourceConfig;
+  sourceConfig: OnboardingSourceInstanceConfig;
 }): string {
   const ingestionGoal = sourceConfig.ingestionGoal?.trim();
   const wikiGoal = config.wikiGoal?.trim();
 
   if (deterministicPull) {
     return `
-Run an OpenWiki source update for ${connector.displayName} (${connector.id}).
+Run an OpenWiki source update for ${getSourceDisplayName(connector, sourceConfig)} (${connector.id}).
 
 Scope:
 - This is one source-specific ingestion run.
+- Source instance: ${sourceConfig.id}${sourceConfig.name ? ` (${sourceConfig.name})` : ""}.
 - Use the last ${INGESTION_WINDOW_HOURS} hours of newly pulled data for this source.
 - Update the wiki only with information relevant to this source and the user's goals.
 
@@ -240,10 +252,11 @@ Instructions:
   }
 
   return `
-Run an OpenWiki source update for ${connector.displayName} (${connector.id}).
+Run an OpenWiki source update for ${getSourceDisplayName(connector, sourceConfig)} (${connector.id}).
 
 Scope:
 - This is one source-specific ingestion run.
+- Source instance: ${sourceConfig.id}${sourceConfig.name ? ` (${sourceConfig.name})` : ""}.
 - Ingest relevant information from this provider over the last ${INGESTION_WINDOW_HOURS} hours.
 - This source cannot be fully pulled deterministically before the agent run, so use available OpenWiki connector tools, MCP tools, local repository inspection, and source config as needed.
 
