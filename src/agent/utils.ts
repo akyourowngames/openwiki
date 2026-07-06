@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { OPEN_WIKI_DIR, UPDATE_METADATA_PATH } from "../constants.js";
@@ -137,7 +143,7 @@ export async function createOpenWikiContentSnapshot(
   const openWikiDir = path.join(cwd, OPEN_WIKI_DIR);
   const hash = createHash("sha256");
 
-  await addDirectoryToSnapshot(hash, openWikiDir, "");
+  await addDirectoryToSnapshot(hash, openWikiDir, "", new Set());
 
   return hash.digest("hex");
 }
@@ -179,13 +185,37 @@ async function readLastUpdate(cwd: string): Promise<UpdateMetadata | null> {
 }
 
 /**
+ * Maximum directory depth for snapshot traversal to prevent stack overflow.
+ */
+const MAX_SNAPSHOT_DEPTH = 20;
+
+/**
  * Recursively adds stable file paths and bytes to the OpenWiki content snapshot.
+ * Tracks visited real paths to detect symlink cycles.
  */
 async function addDirectoryToSnapshot(
   hash: ReturnType<typeof createHash>,
   directory: string,
   relativeDirectory: string,
+  visited?: Set<string>,
+  depth: number = 0,
 ): Promise<void> {
+  if (depth > MAX_SNAPSHOT_DEPTH) {
+    return;
+  }
+
+  const realDir = await realpath(directory).catch(() => null);
+
+  if (!realDir) {
+    return;
+  }
+
+  if (visited?.has(realDir)) {
+    return;
+  }
+
+  visited?.add(realDir);
+
   let entries: Dirent[];
 
   try {
@@ -210,8 +240,12 @@ async function addDirectoryToSnapshot(
     }
 
     if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
       hash.update(`dir:${relativePath}\0`);
-      await addDirectoryToSnapshot(hash, entryPath, relativePath);
+      await addDirectoryToSnapshot(hash, entryPath, relativePath, visited, depth + 1);
       continue;
     }
 
