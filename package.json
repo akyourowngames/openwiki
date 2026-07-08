@@ -13,7 +13,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/check-install-environment.cjs"
   ],
   "keywords": [
     "ai",
@@ -34,6 +35,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
+    "preinstall": "node scripts/check-install-environment.cjs",
     "prebuild": "pnpm run clean",
     "prepack": "pnpm run build",
     "start": "node dist/cli.js",

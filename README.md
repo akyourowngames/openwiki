@@ -10,6 +10,12 @@ OpenWiki is a CLI that writes and maintains documentation for your codebase, bui
 npm install -g openwiki
 ```
 
+On Windows, prefer installing OpenWiki with Node.js package managers such as
+`npm` or `pnpm`. `bun install -g openwiki` may need Visual Studio Build Tools
+with the Desktop development with C++ workload because OpenWiki's checkpointing
+dependency uses `better-sqlite3`, a native module that can fall back to local
+compilation under Bun on Windows.
+
 ## Quick Start
 
 Initialize OpenWiki, configure your model and API key, then generate documentation

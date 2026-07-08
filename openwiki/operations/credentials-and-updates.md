@@ -7,6 +7,15 @@ OpenWiki has two operational concerns that matter for both users and maintainers
 
 It also ships with GitHub Actions and GitLab CI workflow examples for scheduled updates.
 
+## Installation notes
+
+On Windows, prefer installing OpenWiki with Node.js package managers such as
+`npm` or `pnpm`. The Bun global-install path can fall back to compiling
+`better-sqlite3`, which requires Visual Studio Build Tools with the Desktop
+development with C++ workload. OpenWiki's package prints an install notice when
+it detects Windows + Bun so users see the supported workaround before the native
+module build output.
+
 ## Local credential storage
 
 `src/env.ts` manages a private environment file under the user's home directory:
