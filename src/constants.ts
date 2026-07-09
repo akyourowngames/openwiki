@@ -10,7 +10,35 @@ export const ANTHROPIC_BASE_URL_ENV_KEY = "ANTHROPIC_BASE_URL";
 export const OPENROUTER_API_KEY_ENV_KEY = "OPENROUTER_API_KEY";
 export const OPENWIKI_PROVIDER_ENV_KEY = "OPENWIKI_PROVIDER";
 export const OPENWIKI_MODEL_ID_ENV_KEY = "OPENWIKI_MODEL_ID";
-export const DEFAULT_PROVIDER = "openrouter";
+export const OPENWIKI_GOOGLE_ACCESS_TOKEN_ENV_KEY =
+  "OPENWIKI_GOOGLE_ACCESS_TOKEN";
+export const OPENWIKI_GOOGLE_CLIENT_ID_ENV_KEY = "OPENWIKI_GOOGLE_CLIENT_ID";
+export const OPENWIKI_GOOGLE_CLIENT_SECRET_ENV_KEY =
+  "OPENWIKI_GOOGLE_CLIENT_SECRET";
+export const OPENWIKI_GOOGLE_REFRESH_TOKEN_ENV_KEY =
+  "OPENWIKI_GOOGLE_REFRESH_TOKEN";
+export const OPENWIKI_GMAIL_ACCESS_TOKEN_ENV_KEY =
+  "OPENWIKI_GMAIL_ACCESS_TOKEN";
+export const OPENWIKI_GMAIL_REFRESH_TOKEN_ENV_KEY =
+  "OPENWIKI_GMAIL_REFRESH_TOKEN";
+export const OPENWIKI_NOTION_MCP_ACCESS_TOKEN_ENV_KEY =
+  "OPENWIKI_NOTION_MCP_ACCESS_TOKEN";
+export const OPENWIKI_NOTION_MCP_CLIENT_ID_ENV_KEY =
+  "OPENWIKI_NOTION_MCP_CLIENT_ID";
+export const OPENWIKI_NOTION_MCP_REFRESH_TOKEN_ENV_KEY =
+  "OPENWIKI_NOTION_MCP_REFRESH_TOKEN";
+export const OPENWIKI_NOTION_TOKEN_ENV_KEY = "OPENWIKI_NOTION_TOKEN";
+export const OPENWIKI_SLACK_BOT_TOKEN_ENV_KEY = "OPENWIKI_SLACK_BOT_TOKEN";
+export const OPENWIKI_SLACK_CLIENT_ID_ENV_KEY = "OPENWIKI_SLACK_CLIENT_ID";
+export const OPENWIKI_SLACK_CLIENT_SECRET_ENV_KEY =
+  "OPENWIKI_SLACK_CLIENT_SECRET";
+export const OPENWIKI_SLACK_USER_TOKEN_ENV_KEY = "OPENWIKI_SLACK_USER_TOKEN";
+export const OPENWIKI_X_ACCESS_TOKEN_ENV_KEY = "OPENWIKI_X_ACCESS_TOKEN";
+export const OPENWIKI_X_CLIENT_ID_ENV_KEY = "OPENWIKI_X_CLIENT_ID";
+export const OPENWIKI_X_CLIENT_SECRET_ENV_KEY = "OPENWIKI_X_CLIENT_SECRET";
+export const OPENWIKI_X_REFRESH_TOKEN_ENV_KEY = "OPENWIKI_X_REFRESH_TOKEN";
+export const OPENWIKI_TAVILY_API_KEY_ENV_KEY = "TAVILY_API_KEY";
+export const DEFAULT_PROVIDER = "openai";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type OpenWikiProvider =
@@ -46,10 +74,10 @@ type ProviderConfig = {
 };
 
 export const SELECTABLE_OPENWIKI_PROVIDERS = [
+  "openai",
   "openrouter",
   "baseten",
   "fireworks",
-  "openai",
   "openai-compatible",
   "anthropic",
 ] as const satisfies readonly SelectableOpenWikiProvider[];
@@ -80,8 +108,8 @@ export const PROVIDER_CONFIGS: Record<OpenWikiProvider, ProviderConfig> = {
     apiKeyEnvKey: OPENAI_API_KEY_ENV_KEY,
     label: "OpenAI",
     modelOptions: [
-      { id: "gpt-5.4-mini", label: "5.4 mini" },
       { id: "gpt-5.5", label: "5.5" },
+      { id: "gpt-5.4-mini", label: "5.4 mini" },
     ],
   },
   "openai-compatible": {
@@ -118,7 +146,7 @@ export const PROVIDER_CONFIGS: Record<OpenWikiProvider, ProviderConfig> = {
 };
 
 export const DEFAULT_MODEL_ID =
-  PROVIDER_CONFIGS[DEFAULT_PROVIDER].modelOptions[0]?.id ?? "zai-org/GLM-5.2";
+  PROVIDER_CONFIGS[DEFAULT_PROVIDER].modelOptions[0]?.id ?? "gpt-5.5";
 
 export const SUGGESTED_MODEL_IDS = PROVIDER_CONFIGS[
   DEFAULT_PROVIDER
@@ -214,7 +242,19 @@ export function resolveConfiguredProvider(
 ): OpenWikiProvider {
   return (
     normalizeProvider(env[OPENWIKI_PROVIDER_ENV_KEY]) ??
-    (env[OPENROUTER_API_KEY_ENV_KEY] ? "openrouter" : DEFAULT_PROVIDER)
+    (env[OPENAI_API_KEY_ENV_KEY]
+      ? "openai"
+      : env[OPENAI_COMPATIBLE_API_KEY_ENV_KEY]
+        ? "openai-compatible"
+        : env[OPENROUTER_API_KEY_ENV_KEY]
+          ? "openrouter"
+          : env[ANTHROPIC_API_KEY_ENV_KEY]
+            ? "anthropic"
+            : env[BASETEN_API_KEY_ENV_KEY]
+              ? "baseten"
+              : env[FIREWORKS_API_KEY_ENV_KEY]
+                ? "fireworks"
+                : DEFAULT_PROVIDER)
   );
 }
 
@@ -233,4 +273,4 @@ export function isValidModelId(value: string): boolean {
   );
 }
 
-export const OPENWIKI_VERSION = "0.0.2";
+export const OPENWIKI_VERSION = "0.1.0";
