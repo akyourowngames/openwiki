@@ -14,10 +14,22 @@ export function resolveOpenWikiHomeDir(
     : path.join(os.homedir(), ".openwiki");
 }
 
+export function getOpenWikiHomeDisplayPath(
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return environment[OPENWIKI_CONFIG_DIR_ENV_KEY]?.trim()
+    ? resolveOpenWikiHomeDir(environment)
+    : "~/.openwiki";
+}
+
 export const openWikiHomeDir = resolveOpenWikiHomeDir();
+export const openWikiHomeDisplayPath = getOpenWikiHomeDisplayPath();
 export const openWikiConnectorsDir = path.join(openWikiHomeDir, "connectors");
 export const openWikiLocalWikiDir = path.join(openWikiHomeDir, "wiki");
 export const openWikiSkillsDir = path.join(openWikiHomeDir, "skills");
+export const openWikiConnectorsDisplayPath = `${openWikiHomeDisplayPath}/connectors`;
+export const openWikiLocalWikiDisplayPath = `${openWikiHomeDisplayPath}/wiki`;
+export const openWikiSkillsDisplayPath = `${openWikiHomeDisplayPath}/skills`;
 
 export function getConnectorDir(connectorId: string): string {
   return path.join(openWikiConnectorsDir, connectorId);
