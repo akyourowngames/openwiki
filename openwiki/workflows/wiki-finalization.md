@@ -22,10 +22,10 @@ sources:
     resource: repo://src/okf/generated-provenance.ts
   - id: openwiki-source-5835357b69a5869be210533b
     resource: repo://src/okf/index-sync.ts
+generated: { by: "openwiki/0.5.2", at: "2026-09-15T08:09:47.649Z" }
 verified:
-  - by: openwiki/0.4.3
-    at: 2026-08-28T03:39:43.412Z
-generated: { by: "openwiki/0.4.3", at: "2026-08-28T03:39:43.412Z" }
+  - by: openwiki/0.5.2
+    at: 2026-09-15T08:09:47.649Z
 ---
 
 # Wiki Finalization and Link Integrity
@@ -89,7 +89,7 @@ sequenceDiagram
     Caller->>Caller: restore skipped page Markdown from snapshots
     Caller->>Caller: finalize Claims with excludedPages=skippedPages
     Caller->>Caller: assertRepositoryClaimsDurable (excludes skipped)
-    Caller->>Caller: replaceRepositoryPageManifest (preserve skipped)
+    Caller->>Caller: replaceRepositoryPageManifest (regenerated / preserveSource / preserve skipped)
     Caller->>Caller: hasRepositorySourceChanged again
     Caller->>Caller: write interrupted or complete metadata
     Caller->>Caller: remove .run.json last
@@ -221,14 +221,19 @@ At finish, the sequence is:
 4. **Apply deletions and reconcile deleted Claims.** Abandoned generated pages
    and the plan's explicit `deletePages` are removed, and
    `reconcileDeletedClaimPages` records deletions for any sidecar whose Markdown
-   page no longer exists.
+   page no longer exists. All three deletion paths tolerate a not-found backend
+   error via `isNotFoundBackendError` (which matches both the `"file_not_found"`
+   code and the human-readable `"not found"` string), so deleting a page that no
+   longer exists on disk does not abort finalization.
 5. **Run `finalizeWikiArtifacts`** against the rehydrated pre-authoring
    baseline, the run timestamp, the producer actor, the per-page producer-actor
    map, and the session's per-page evidence resources.
 6. **Restore skipped page Markdown.** After finalization, each skipped job's
    snapshot is replayed through `restoreRepositoryPageMarkdown`, writing the
    original bytes back (or deleting the file when the snapshot Markdown is
-   `null`; a missing file on delete is tolerated). This runs _after_
+   `null`; a missing file on that delete is tolerated via
+   `isNotFoundBackendError`, so a page already removed by a deletion step does
+   not abort the restore). This runs _after_
    `finalizeWikiArtifacts` so index synchronization and provenance stamping see
    the final wiki structure; the skipped pages are then returned to their
    pre-worker state, which is the structure the snapshot contract guaranteed.
@@ -241,10 +246,38 @@ At finish, the sequence is:
 8. **`assertRepositoryClaimsDurable`** (also excluding the skipped pages) confirms
    no orphaned Claims sidecars remain and that every non-empty Claim set matches
    a durable sidecar and the final Markdown bytes exactly.
-9. **Rebuild the page manifest.** `replaceRepositoryPageManifest` rebuilds the
-   manifest from the surviving pages discovered by the Claims store, preserving
-   skipped pages' prior coverage so a later update can fast-forward them. The
-   current run's source checkpoint anchors the rebuilt entries.
+9. **Rebuild the page manifest.** After the durability proof,
+   `finishRepositoryRun` discovers the surviving factual pages from the Claims
+   store (`store.discoverPages()`) and partitions them before calling
+   `replaceRepositoryPageManifest`. It computes two sets from that inventory:
+
+   - **`regeneratedPages`** — pages this run actually (re)completed, taken from
+     `producerActorsByPage.keys()` (manifest entries whose
+     `completedRunId === run.state.runId`). These are the only pages restamped with
+     the current run's source checkpoint
+     (`getRepositoryRunSourceCheckpoint(run.state)`), so a stale manifest entry can
+     never promote a page this run did not re-prove.
+   - **`preserveSourcePages`** — every other tracked current page: pages left
+     untouched because they were outside this run's plan, plus pages already
+     durable from an earlier run, minus the skipped pages. These keep their _prior_
+     `gitHead`/`sourceFingerprint` checkpoint rather than being advanced to the
+     current run's, but deterministic finalization may have rewritten code-owned
+     metadata on their body, so their final Markdown/Claims pair is re-proved and
+     `pageVersion` is refreshed only when the final bytes actually changed.
+
+   `skippedPages` is passed as `preservePages`. Inside
+   `replaceRepositoryPageManifest`, each surviving page falls into exactly one of
+   three branches: a `preservePages` entry is copied verbatim from the previous
+   manifest (so a later update can fast-forward a skipped page from its intact
+   prior coverage); a `preserveSourcePages` entry re-invokes `buildManifestEntry`
+   against the entry's _own_ prior checkpoint (re-hashing the final Markdown and
+   re-checking the Claims sidecar) and keeps the previous entry when the refreshed
+   `pageVersion` is identical, otherwise writes the refreshed entry — or, if no
+   prior coverage exists, attempts to seed a first entry from the current run's
+   checkpoint and tolerates a `RepositoryRunError` by leaving the page uncovered for
+   full review; every other page is restamped with the current run's source
+   checkpoint. The net effect is that untouched pages keep their prior source
+   coverage while every retained entry still matches the final durable bytes.
 10. **Recompute source drift after finalization.** `hasRepositorySourceChanged`
     runs a second time; the final `sourceChanged` is
     `sourceChangedBeforeFinish || <changed after finalization>`. Source drift

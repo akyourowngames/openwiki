@@ -4,8 +4,30 @@ title: Source Map
 description: Maps the OpenWiki /src directory to its owned subsystems, giving each one a responsibility and its principal entry files, and identifies the largest, most central files that anchor agent execution, configuration, and repository generation.
 tags: [source-map, architecture, subsystems, entrypoints, src-layout]
 sources:
+  - id: openwiki-source-c45a528335f5cf7306567dc9
+    resource: repo://evals/deepswe/README.md
+  - id: openwiki-source-a0ae0064681def9d035f11b2
+    resource: repo://evals/deepswe/run.py
+  - id: openwiki-source-92ae12d8c88734df7ebc7663
+    resource: repo://evals/ledger/core/types.ts
+  - id: openwiki-source-8fe49b679bb29b6d5403548c
+    resource: repo://evals/ledger/reevaluate.ts
+  - id: openwiki-source-bdd14aa92ae4a01628e282cd
+    resource: repo://evals/ledger/run.ts
+  - id: openwiki-source-97ffedc1258986c2ef57fb85
+    resource: repo://evals/ledger/run/runner.ts
+  - id: openwiki-source-2dc719639f40452478188d6b
+    resource: repo://evals/ledger/system/openwiki-system.ts
+  - id: openwiki-source-33844b1c2c98eca457fd6142
+    resource: repo://evals/ledger/tsconfig.json
+  - id: openwiki-source-5b54a58d1b51cd490b0e7162
+    resource: repo://package.json
+  - id: openwiki-source-f8b008ed89162a0e204fc02d
+    resource: repo://src/agent/bob.ts
   - id: openwiki-source-a953060a04ccefcf777de48e
     resource: repo://src/agent/index.ts
+  - id: openwiki-source-8b316b2a9d744597bffd9c56
+    resource: repo://src/agent/repository-prompts.ts
   - id: openwiki-source-6cb3236b8c1412a26d832fcf
     resource: repo://src/agent/repository-runner.ts
   - id: openwiki-source-69abc6f0f641147820a274bc
@@ -16,10 +38,16 @@ sources:
     resource: repo://src/claims/brains/code/store.ts
   - id: openwiki-source-75ba41da829774fe72b7a0af
     resource: repo://src/claims/evidence/repository/resolver.ts
+  - id: openwiki-source-638173446de4138fa3a622a8
+    resource: repo://src/claims/guidance.ts
   - id: openwiki-source-5c43e3fe562cf274dd6a5564
     resource: repo://src/cli/cli.tsx
   - id: openwiki-source-278e7e180eac811fc1a24f7a
     resource: repo://src/config/constants.ts
+  - id: openwiki-source-c2770ac037a7f4b0116a0dc5
+    resource: repo://src/config/env.ts
+  - id: openwiki-source-f1dd0edb129e50f253618ff4
+    resource: repo://src/config/reasoning.ts
   - id: openwiki-source-3632bcf6292cc01fef69c5b7
     resource: repo://src/connectors/registry.ts
   - id: openwiki-source-1197594de038075f3570340c
@@ -32,6 +60,8 @@ sources:
     resource: repo://src/generation/run-state.ts
   - id: openwiki-source-c6189f89b3f67d0cbf87739f
     resource: repo://src/ingestion/ingestion.ts
+  - id: openwiki-source-410e7efbe6dee8c4d43e9b4d
+    resource: repo://src/integrations/core/protocol.ts
   - id: openwiki-source-58835b77ce38a0dd1fed8d09
     resource: repo://src/integrations/core/session-manager.ts
   - id: openwiki-source-eab9328975981f427c4218d0
@@ -54,10 +84,12 @@ sources:
     resource: repo://src/visualize/graph.ts
   - id: openwiki-source-4d856d692c32be213c8c46b4
     resource: repo://src/visualize/server.ts
-generated: { by: "openwiki/0.4.3", at: "2026-08-28T03:39:43.412Z" }
+  - id: openwiki-source-d485c898eb60ebb173072eab
+    resource: repo://test/agent/stream-redaction.test.ts
+generated: { by: "openwiki/0.5.2", at: "2026-09-15T08:09:47.649Z" }
 verified:
-  - by: openwiki/0.4.3
-    at: 2026-08-28T03:39:43.412Z
+  - by: openwiki/0.5.2
+    at: 2026-09-15T08:09:47.649Z
 ---
 
 # Source Map
@@ -69,8 +101,9 @@ into a subsystem's own page.
 
 Related reading: [architecture overview](/openwiki/architecture/overview.md),
 [agent runtime](/openwiki/architecture/agent-runtime.md),
-[grounded claims](/openwiki/concepts/grounded-claims.md), and
-[connectors](/openwiki/integrations/connectors.md).
+[grounded claims](/openwiki/concepts/grounded-claims.md),
+[connectors](/openwiki/integrations/connectors.md), and
+[evaluation subsystem](/openwiki/testing/evals.md).
 
 ## The central files
 
@@ -84,25 +117,63 @@ before anything else.
   checkpoint thread and its history (`createOpenWikiThreadId`,
   `pruneCheckpointHistory`, `resolveCheckpointTarget`), and parses streamed
   agent events into `OpenWikiRunEvent`s (`parseStreamEvent`,
-  `parseAgentStreamChunk`).
+  `parseAgentStreamChunk`, and the `parseUpdatesChunk` helper it dispatches to
+  for `'updates'`-mode LangGraph state-delta chunks, which extracts the first
+  non-empty assistant text from the per-node output objects). While streaming,
+  `parseAgentStreamChunk` suppresses content blocks whose `type` includes
+  `file` or `image` (notably `file`, `input_file`, and `image_url` base64
+  blobs) so they never reach the terminal — behavior pinned by
+  `test/agent/stream-redaction.test.ts`.
 - **`src/config/constants.ts`** is the single large registry of stable strings:
   the `openwiki` directory name and the page-manifest/update-metadata paths, plus
   the provider environment-variable key names and defaults for every supported
   provider (`OPENAI_API_KEY_ENV_KEY`, `ANTHROPIC_API_KEY_ENV_KEY`, Bedrock/Vertex,
-  Gemini, OpenRouter, Baseten, Copilot, Fireworks, Nebius, NVIDIA, and the
-  connector OAuth keys) and the `OpenWikiProvider` union. Nearly every subsystem
-  imports its identifiers from here.
+  Gemini, OpenRouter, Baseten, Copilot, Fireworks, Nebius, NVIDIA, the IBM Bob
+  keys (`BOB_API_KEY_ENV_KEY`, `BOB_BASE_URL_ENV_KEY`), the `openai-compatible`
+  keys — including the `OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY` and
+  `OPENAI_COMPATIBLE_REASONING_EFFORT_SUPPORTED_ENV_KEY` gates — and the
+  connector OAuth keys) and the `OpenWikiProvider` union (which includes the
+  `bob` provider). It also owns the output-token ceilings:
+  `resolveConfiguredMaxOutputTokens` picks the right provider-specific setting
+  (OpenRouter's legacy `OPENWIKI_OPENROUTER_MAX_TOKENS` first, then
+  `OPENWIKI_MAX_OUTPUT_TOKENS`), and `resolveBedrockMaxTokens` falls back to
+  `BEDROCK_DEFAULT_MAX_TOKENS` (16000) so Bedrock's 4096-token default does not
+  truncate long pages. It additionally gates reasoning effort and stream mode
+  for `openai-compatible` providers: it exports
+  `OPENAI_COMPATIBLE_REASONING_EFFORT_SUPPORTED_ENV_KEY` and
+  `resolveOpenAiCompatibleReasoningEffortSupported`, which `reasoning.ts` consults
+  to decide whether an `openai-compatible` model advertises a reasoning
+  capability, `providerUsesResponsesApi`, which selects the
+  `responses-reasoning` vs `chat-completions-reasoning-effort` transport, and
+  `resolveOpenAiCompatibleStreamMessages` (the
+  `OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY` resolver), which opts an
+  `openai-compatible` endpoint back into LangGraph's `"messages"` stream mode.
+  Nearly every subsystem imports its identifiers from here.
 - **`src/generation/repository-run.ts`** owns the repository-generation
-  lifecycle. It drives the plan-then-page workflow with `beginRepositoryRun`,
-  `submitRepositoryPlan`, `nextRepositoryPage`, `submitRepositoryPage`, and
+  lifecycle. It drives the plan-then-page workflow across a six-operation
+  surface: `beginRepositoryRun`, `submitRepositoryPlan`, `nextRepositoryPage`,
+  `inspectRepositoryPageClaims`, `submitRepositoryPage`, and
   `finishRepositoryRun`, wiring together the run state, claims runtime, wiki
   finalizer, and OKF frontmatter validation — including deterministic
-  frontmatter repair (`repairPersistedFile`) before a page job is accepted. It
-  also owns the skip-failed-page-workers path: `captureRepositoryPageSnapshot`
-  records the pending page and its claims sidecar before a worker runs,
-  `skipRepositoryPage` rolls a failed worker back (restoring the page markdown
-  and sidecar, marking the job `skipped`), and `restoreRepositoryPageMarkdown`
-  re-applies the snapshot during `finishRepositoryRun` for every skipped job.
+  frontmatter repair (`repairPersistedFile`) before a page job is accepted.
+  `beginRepositoryRun` resolves the requested language up front
+  (`resolveLanguage`) and rejects an unrecognized language with
+  `invalid_input` rather than falling back to English, since run state cannot
+  change its language after a start. `nextRepositoryPage` returns the first
+  pending job plus its `existingClaimCount` and only the
+  `claimsRequiringAttention` (Claims carrying a stale or unresolved issue), so
+  focused updates need not re-emit issue-free Claims; `inspectRepositoryPageClaims`
+  exposes the page's complete compact Claim set on demand for workers that
+  intend to revise or remove otherwise-current content. `submitRepositoryPage`
+  takes sparse Claim decisions (`confirmedClaimIds`/`claims`/`retractedClaimIds`)
+  which `reconcilePageClaims` turns into confirm/update/add/retract operations,
+  retaining omitted issue-free Claims. It also owns the skip-failed-page-workers
+  path: `captureRepositoryPageSnapshot` records the pending page and its
+  claims sidecar before a worker runs, `skipRepositoryPage` rolls a failed
+  worker back (restoring the page markdown and sidecar, marking the job
+  `skipped`), and `restoreRepositoryPageMarkdown` re-applies the snapshot
+  during `finishRepositoryRun` for every skipped job, tolerating a not-found
+  page when the snapshot recorded no markdown.
 
 ## Subsystems
 
@@ -119,35 +190,53 @@ by the generation lifecycle), `src/agent/docs-only-backend.ts`
 (`prompt.ts`, `repository-prompts.ts`), read-boundary enforcement
 (`openwiki-ignore.ts`), wiki post-processing (`wiki-finalizer.ts`,
 `wiki-link-validator.ts`, `wiki-replacement.ts`), and the ChatGPT/Vertex auth
-surfaces (`openai-chatgpt-oauth.ts`, `vertex-surface.ts`).
+surfaces (`openai-chatgpt-oauth.ts`, `vertex-surface.ts`), and the IBM Bob fetch
+adapter (`bob.ts`, whose `createBobFetch` rewrites `Authorization: Bearer …` to
+`Apikey <key>` and sets the `ibm-bob-openwiki-provider` `User-Agent` required by
+Bob's Cloudflare WAF — wired into `createModel`'s `bob` branch).
 `runNativeRepositoryGeneration` drives the full loop: it begins the run, runs
 the planning agent, then calls `runPendingPageAgents` to spawn one fresh
-shell-free worker per pending page, collecting skipped-page snapshots and
-passing them to `finishRepositoryRun`. On a worker that exits without
-submitting, `runPageAgent` captures a `RepositoryPageSnapshot` via
-`captureRepositoryPageSnapshot`, calls `skipRepositoryPage` to restore the
-page and mark it `skipped`, collects those snapshots, and passes them to
-`finishRepositoryRun` so skipped pages are reconsidered on the next update.
+shell-free worker per pending page. Each `runPageAgent` worker is given an
+`inspect_claims` tool (backing `inspectRepositoryPageClaims`) and a
+`submit_page` tool (backing the sparse `submitRepositoryPage`); it captures a
+`RepositoryPageSnapshot` via `captureRepositoryPageSnapshot` before any model
+work, and on a worker that exits without submitting it calls
+`skipRepositoryPage` to restore the page and mark it `skipped`, collecting the
+snapshots and passing them to `finishRepositoryRun` so skipped pages keep their
+pre-work content and are reconsidered on the next update.
 
 ### generation — repository run lifecycle and page jobs
 
 Orchestrates a full repository wiki build. Principal entry:
-`src/generation/repository-run.ts`. `src/generation/run-state.ts` owns the
-durable on-disk checkpoint (`.run.json`, schema-versioned, with `planning`/
-`generating` phases and `pending`/`skipped`/`complete` page-job statuses) so
-runs resume after interruption. `src/generation/page-jobs.ts` builds the plan
-(`createRepositoryPlan`) and replaces per-page claims (`replacePageClaims`).
-`src/generation/page-manifest.ts` owns the committed page-correctness ledger
-(`openwiki/.page-manifest.json`, schema-versioned), recording each completed
-page's source fingerprint, page version, and producer provenance.
-`src/generation/errors.ts` defines `RepositoryRunError`. The lifecycle's
-snapshot/skip/restore operations (`captureRepositoryPageSnapshot`,
-`skipRepositoryPage`, `restoreRepositoryPageMarkdown`) let a failed page worker
-be rolled back to its pre-work state and marked `skipped` rather than failing
-the whole run; `finishRepositoryRun` requires a snapshot for every skipped job
-and re-applies those snapshots before finalizing.
+`src/generation/repository-run.ts`, which imports `resolveLanguage`/
+`requireResolvedLanguage` from `platform/language.ts` so `beginRepositoryRun`
+can reject an unrecognized language before any run state is written.
+`src/generation/run-state.ts` owns the durable on-disk checkpoint (`.run.json`,
+schema-versioned, with `planning`/`generating` phases and `pending`/`skipped`/
+`complete` page-job statuses) so runs resume after interruption.
+`src/generation/page-jobs.ts` builds the plan (`createRepositoryPlan`) and
+reconciles per-page Claims (`reconcilePageClaims`), turning sparse
+`confirmedClaimIds`/`claims`/`retractedClaimIds` decisions into
+confirm/update/add/retract operations while retaining omitted issue-free
+Claims. `src/generation/page-manifest.ts`
+owns the committed page-correctness ledger (`openwiki/.page-manifest.json`,
+schema-versioned), recording each completed page's source fingerprint, page
+version, and producer provenance. `src/generation/errors.ts` defines
+`RepositoryRunError`. The lifecycle exposes a six-operation surface
+(`beginRepositoryRun`, `submitRepositoryPlan`, `nextRepositoryPage`,
+`inspectRepositoryPageClaims`, `submitRepositoryPage`, `finishRepositoryRun`).
+`nextRepositoryPage` returns `claimsRequiringAttention` and
+`existingClaimCount` rather than the full Claim set; `inspectRepositoryPageClaims`
+returns the complete compact Claim set on demand. Its snapshot/skip/restore
+operations (`captureRepositoryPageSnapshot`, `skipRepositoryPage`,
+`restoreRepositoryPageMarkdown`) let a failed page worker be rolled back to its
+pre-work state and marked `skipped` rather than failing the whole run;
+`restoreRepositoryPageMarkdown` tolerates a not-found page when the snapshot
+held no markdown, so deleting a newly added page counts as a clean restore;
+`finishRepositoryRun` requires a snapshot for every skipped job and re-applies
+those snapshots before finalizing.
 
-### claims — grounded-claim persistence and evidence resolution
+### claims — grounded-claim persistence, reconciliation guidance, and evidence resolution
 
 Owns the grounded-claims model: strict per-page claim sidecars and the evidence
 that backs them. `src/claims/brains/code/runtime.ts` (`prepareClaimsRuntime`)
@@ -158,6 +247,12 @@ sidecars with a schema version; `session.ts` inspects and replaces page claims;
 mutations, error types, and the resolver cache. `src/claims/evidence/repository/`
 resolves and relocates `repo://` evidence resources (`resolver.ts`,
 `resource.ts`), including opaque line-range relocation metadata.
+`src/claims/guidance.ts` is the shared model-facing Claims standard: it exports
+`CLAIMS_SUBSTANCE_GUIDANCE` (the rules for selecting substantive, atomic
+propositions over shallow per-symbol facts) and `CLAIMS_RECONCILIATION_GUIDANCE`
+(the sparse-reconciliation rules), consumed verbatim by the page-worker prompt
+(`repository-prompts.ts`), the `submit_page` tool description, and the MCP
+server `INSTRUCTIONS` so the model sees one standard across every surface.
 
 ### okf — Open Knowledge Format frontmatter, indexing, and verification
 
@@ -208,12 +303,31 @@ Owns credential acquisition and storage. Principal entries: `src/auth/oauth.ts`
 `oauth-discovery.ts`, `providers.ts`, `configure.ts`, `external-cli-auth.ts`, and
 `ngrok.ts` for discovery, provider selection, and tunneling.
 
-### config — environment, home directory, and constants
+### config — environment, home directory, reasoning, and constants
 
 Owns runtime configuration. `src/config/constants.ts` is the central identifier
-registry (path constants, provider env keys, the `OpenWikiProvider` union, and
-defaults); `env.ts` loads and saves the OpenWiki `.env`; `openwiki-home.ts`
-resolves the home/wiki directories; `reasoning.ts` resolves reasoning settings.
+registry (path constants, provider env keys — including the IBM Bob
+`BOB_API_KEY_ENV_KEY`/`BOB_BASE_URL_ENV_KEY`, the `bob` provider in the
+`OpenWikiProvider` union, and the `openai-compatible` streaming/responses-API
+gates plus `OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY` and
+`OPENAI_COMPATIBLE_REASONING_EFFORT_SUPPORTED_ENV_KEY` — provider defaults), and
+also owns the output-token resolution helpers
+(`resolveConfiguredMaxOutputTokens`, `resolveBedrockMaxTokens`,
+`BEDROCK_DEFAULT_MAX_TOKENS`) plus `resolveOpenAiCompatibleReasoningEffortSupported`,
+`resolveOpenAiCompatibleStreamMessages`, and `providerUsesResponsesApi`, which
+gate reasoning effort, stream mode, and the responses API transport for
+`openai-compatible` providers; `env.ts` loads and saves the OpenWiki `.env` and
+is the single source of truth for the managed-keys list (`MANAGED_ENV_KEYS`,
+now including `BOB_API_KEY_ENV_KEY`, `BOB_BASE_URL_ENV_KEY`,
+`OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY`, and
+`OPENWIKI_OPENAI_COMPATIBLE_REASONING_EFFORT_SUPPORTED`), from which the
+credential-diagnostic and debug key lists derive; `openwiki-home.ts` resolves the
+home/wiki directories; `reasoning.ts` resolves reasoning settings, owning the
+three reasoning transports (`responses-reasoning`,
+`chat-completions-reasoning-effort`, `gemini-thinking-level`) and the
+`openai-compatible` capability resolution that consults
+`resolveOpenAiCompatibleReasoningEffortSupported` and
+`providerUsesResponsesApi` from `constants.ts`.
 
 ### integrations — host-tool integration and MCP server surface
 
@@ -222,13 +336,28 @@ is the principal entry: `HostSessionManager` is a thin single-run MCP adapter ov
 the transport-neutral lifecycle core, serializing one lifecycle operation at a time
 (`runOperation`) and mapping `RepositoryRunError` codes into stable
 `HostIntegrationError`s at the boundary. Its `begin`, `submitPlan`, `nextPage`,
-`submitPage`, and `finish` methods delegate to the `generation/repository-run.ts`
-lifecycle, and `tools()` returns exactly the five OpenWiki lifecycle tools
-(`openwiki_begin`, `openwiki_submit_plan`, `openwiki_next_page`,
-`openwiki_submit_page`, `openwiki_finish`) for an MCP transport to expose.
-`src/integrations/core/protocol.ts` defines the tool input schemas and host-id
+`inspectPageClaims`, `submitPage`, and `finish` methods delegate to the
+`generation/repository-run.ts` lifecycle, and `tools()` returns exactly the six
+OpenWiki lifecycle tools (`openwiki_begin`, `openwiki_submit_plan`,
+`openwiki_next_page`, `openwiki_inspect_page_claims`, `openwiki_submit_page`,
+`openwiki_finish`) for an MCP transport to expose. The
+tool descriptions are the host-facing contract: `openwiki_begin` advertises that
+an unrecognized `language` returns `invalid_input` instead of starting a run,
+`openwiki_next_page` returns only the stale or unresolved Claims requiring an
+explicit decision (plus an `existingClaimCount`),
+`openwiki_inspect_page_claims` returns the complete Claim set on demand,
+`openwiki_submit_page` states the sparse Claim-reconciliation rules (reuse ids
+for revisions, omit to retain, omit id for new, `retractedClaimIds` for removals),
+and `openwiki_finish` requires every job complete before deterministic
+deletion/validation/indexing. `src/integrations/core/protocol.ts` defines the
+`ProtocolToolName` union (the six tool names), the strict Zod input schemas
+including the sparse `SubmitPageInput` (optional `confirmedClaimIds`,
+`claims`, and `retractedClaimIds`) and `InspectPageClaimsInput`, and host-id
 validation; `repository-root.ts` resolves the repository root.
-`src/integrations/mcp/server.ts` exposes OpenWiki over MCP (stdio in
+`src/integrations/mcp/server.ts` exposes OpenWiki over MCP, advertising an
+`INSTRUCTIONS` preamble that incorporates `CLAIMS_RECONCILIATION_GUIDANCE` from
+`claims/guidance.ts` so the host model follows the same sparse-reconciliation
+standard as the native page-worker prompt (stdio in
 `stdio.ts`); `src/integrations/install/` handles host installation.
 
 ### visualize — local graph viewer
@@ -265,25 +394,77 @@ Owns Mermaid handling in generated wikis: `fences.ts` extracts fences,
 applies the policy to pages, and `dom-shim.ts` provides the headless render
 environment.
 
+### evals — longitudinal documentation evaluation
+
+Owns the offline evaluation harnesses that measure whether generated wikis stay
+accurate as their source of truth evolves, and whether OpenWiki improves a
+coding agent. Unlike every other subsystem, the evals live under `evals/`
+(not `src/`) and are invoked via `pnpm` scripts — `eval:ledger` and
+`eval:ledger:reevaluate` — rather than the main CLI binary, with their own
+TypeScript project (`evals/ledger/tsconfig.json`). It is split into two
+independent sub-harnesses.
+
+**LEDGER** (`evals/ledger/`) — the Longitudinal Evaluation of Documentation
+Grounding, Evolution, and Revision — replays a benchmark's Git checkpoints, runs
+OpenWiki at each checkpoint, and judges the frozen wiki snapshot. Principal
+entry: `evals/ledger/run.ts` (`eval:ledger`), which loads the benchmark,
+constructs the `OpenWikiSystem` adapter, runs `runBenchmark`, and persists the
+fully auditable result. `evals/ledger/reevaluate.ts` (`eval:ledger:reevaluate`)
+re-runs the evaluator over a completed run without invoking the system under
+test. `evals/ledger/run/runner.ts` (`runBenchmark`) owns the benchmark
+lifecycle: it preflight-validates the trace (every checkpoint SHA resolves,
+each is an ancestor of the next, and none tracks the wiki directory), then
+walks it running `init` then `update`, captures an immutable artifact at each
+checkpoint, and evaluates it; the workspace and worktree are always torn down.
+`evals/ledger/core/types.ts` owns the benchmark and claim types
+(`LedgerBenchmark`, `LedgerTrace`, `LedgerCheckpoint`, `SemanticEvidenceMap`,
+`KnowledgeArtifact`, `EvidenceCorpus`, `SystemUnderTest`) and the claim-state
+model (`supported`/`stale`/`invented`/`unverified`). `evals/ledger/system/openwiki-system.ts`
+(`OpenWikiSystem`) is the baseline System Under Test: it drives OpenWiki through
+its single `runOpenWikiAgent` entrypoint with `outputMode: "repository"` and no
+user message, so update change-detection is driven purely by the real source
+deltas between checkpoints.
+
+**DeepSWE** (`evals/deepswe/`) is a Python paired-evaluation harness that
+measures whether OpenWiki improves a coding agent on DeepSWE SWE-bench tasks.
+Principal entry: `evals/deepswe/run.py`, which exposes the `prepare`,
+`baseline`, `openwiki`, `paired`, and `summarize` subcommands. The `paired`
+command runs both conditions with the same tasks, seed, model, reasoning effort,
+and Harbor environment: `baseline` gives Codex only the task and repository,
+while `openwiki` restores or generates OpenWiki in an isolated clone and merges
+its managed instructions into the root `AGENTS.md` before the same Codex adapter
+solves the unchanged task. The harness pins the DeepSWE commit, Harbor, litellm,
+and Codex CLI versions for reproducibility, and uses Harbor's official LangSmith
+plugin so both conditions record their trials in the same shared dataset.
+
+See the full [evaluation subsystem](/openwiki/testing/evals.md) page for the
+benchmark contract, claim-state definitions, and run instructions.
+
 ## How the central subsystems connect
 
 The CLI entrypoint parses a command and, for repository generation, the agent
 constructs a model and runs the plan/page loop, which calls the generation
-lifecycle; that lifecycle persists claims and validates OKF frontmatter as it
-writes each page.
+lifecycle; that lifecycle reconciles sparse Claim decisions, persists claims,
+and validates OKF frontmatter as it writes each page. Both the native
+page-worker prompt and the MCP host instructions share the same Claims
+reconciliation guidance from `claims/guidance.ts`.
 
 ```mermaid
 flowchart TD
   CLI["cli/cli.tsx parses and dispatches"] --> Agent["agent/index.ts runOpenWikiAgent"]
   Agent --> Runner["agent/repository-runner.ts plan and page loop"]
-  Runner --> Gen["generation/repository-run.ts lifecycle"]
+  Runner --> Gen["generation/repository-run.ts six-operation lifecycle"]
   Gen --> State["generation/run-state.ts durable checkpoint"]
   Gen --> Claims["claims runtime and store"]
   Gen --> OKF["okf/frontmatter.ts validation"]
+  Guidance["claims/guidance.ts substance and reconciliation standard"] -.-> Runner
+  Guidance -.-> MCP["integrations/mcp/server.ts INSTRUCTIONS"]
   Agent --> Connectors["connectors/tools.ts source tools"]
   Config["config/constants.ts identifiers"] -.-> Agent
   Config -.-> Gen
 ```
 
 Caption: Control flow from the CLI through the agent into the repository
-generation lifecycle, with config identifiers shared across subsystems.
+generation lifecycle, with the shared Claims guidance feeding both the native
+page-worker prompt and the MCP host instructions, and config identifiers
+shared across subsystems.

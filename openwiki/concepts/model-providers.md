@@ -1,12 +1,11 @@
 ---
 type: reference
 title: Model Providers and Credentials
-description: Reference for OpenWiki's supported model providers, their environment keys, base URLs, and authentication methods (API keys, ChatGPT OAuth, Vertex ADC, AWS SDK, and external CLI), and where credentials and OAuth tokens are persisted.
-tags: [model-providers, credentials, oauth, authentication, configuration, env]
-verified:
-  - by: openwiki/0.3.3
-    at: 2026-08-25T02:14:25.283Z
+description: Reference for OpenWiki's supported model providers (API keys, ChatGPT OAuth, Vertex ADC, AWS SDK, external CLI, and the IBM Bob Apikey adapter), their environment keys, base URLs, authentication methods, the reasoning-effort transports they support, and where credentials and OAuth tokens are persisted.
+tags: [model-providers, credentials, oauth, authentication, configuration, env, reasoning]
 sources:
+  - id: openwiki-source-f8b008ed89162a0e204fc02d
+    resource: repo://src/agent/bob.ts
   - id: openwiki-source-a953060a04ccefcf777de48e
     resource: repo://src/agent/index.ts
   - id: openwiki-source-91bd3ea533c00a8366f8d420
@@ -19,9 +18,18 @@ sources:
     resource: repo://src/config/constants.ts
   - id: openwiki-source-c2770ac037a7f4b0116a0dc5
     resource: repo://src/config/env.ts
+  - id: openwiki-source-f1dd0edb129e50f253618ff4
+    resource: repo://src/config/reasoning.ts
   - id: openwiki-source-c35800ddf00768a1fa848d13
     resource: repo://src/setup/credentials/persistence.ts
-generated: { by: "openwiki/0.3.3", at: "2026-08-25T02:14:25.283Z" }
+  - id: openwiki-source-a302ab67124df4839d320111
+    resource: repo://test/agent/bob.test.ts
+  - id: openwiki-source-21fe6d4741a8225393c37599
+    resource: repo://test/agent/create-model.test.ts
+generated: { by: "openwiki/0.5.2", at: "2026-09-15T08:09:47.649Z" }
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-09-15T08:09:47.649Z
 ---
 
 # Model Providers and Credentials
@@ -41,7 +49,11 @@ how that provider is configured and authenticated. Helper accessors
 (`getProviderConfig`, `getProviderApiKeyEnvKey`, `getProviderAuthMethod`,
 `getProviderBaseUrlEnvKey`, `resolveProviderBaseUrl`, `resolveProviderRegion`,
 `resolveProviderLocation`, and friends) read from this registry rather than
-hardcoding provider knowledge elsewhere.
+hardcoding provider knowledge elsewhere. Two transport-selecting accessors
+take a model ID in addition to the provider: `providerUsesResponsesApi`
+(`true` for `openai`, the `gpt-5` pattern for `copilot`, and a configurable
+flag for `openai-compatible`) and `providerUsesStreaming` (forced on for
+`copilot` and configurable for `openai-compatible`).
 
 The active provider is resolved by `resolveConfiguredProvider`: it prefers the
 explicit `OPENWIKI_PROVIDER` value (normalized case-insensitively by
@@ -57,6 +69,7 @@ first model option of the default provider (`DEFAULT_MODEL_ID`).
 | `openai`                       | OpenAI                        | api-key       | `OPENAI_API_KEY`                            | (SDK default) / `OPENAI_BASE_URL`                              |
 | `openai-chatgpt`               | OpenAI (ChatGPT login)        | oauth         | `OPENAI_CHATGPT_ACCESS_TOKEN` (+ token set) | Codex backend (fixed)                                          |
 | `anthropic`                    | Anthropic                     | api-key       | `ANTHROPIC_API_KEY`                         | (SDK default) / `ANTHROPIC_BASE_URL`                           |
+| `bob`                          | IBM Bob                       | api-key       | `BOB_API_KEY`                               | `https://api.us-east.bob.ibm.com/inference/v1` / `BOB_BASE_URL` |
 | `copilot`                      | GitHub Copilot                | external-cli  | `COPILOT_API_KEY`                           | `https://api.githubcopilot.com` / `COPILOT_BASE_URL`           |
 | `gemini`                       | Gemini (AI Studio)            | api-key       | `GEMINI_API_KEY`                            | (SDK default)                                                  |
 | `gemini-enterprise`            | Gemini Enterprise (Vertex AI) | ADC (keyless) | none — `GOOGLE_CLOUD_PROJECT`               | derived from project/location                                  |
@@ -69,7 +82,9 @@ first model option of the default provider (`DEFAULT_MODEL_ID`).
 | `nvidia`                       | NVIDIA NIM                    | api-key       | `NVIDIA_API_KEY`                            | `https://integrate.api.nvidia.com/v1` / `NVIDIA_BASE_URL`      |
 
 `SELECTABLE_OPENWIKI_PROVIDERS` fixes the order these providers appear in the
-setup wizard.
+setup wizard. The `bob` provider is the only one that sets `fixedModel`
+(`"premium"`): `resolveModelId` returns it verbatim and skips model selection
+entirely, so Bob's model step never appears in the wizard.
 
 ## Authentication methods
 
@@ -90,6 +105,26 @@ self-hosted or proxied endpoints can be pointed at without code changes. The
 `OPENAI_COMPATIBLE_BASE_URL` (`requiresBaseUrl`); its base-URL validation rejects
 a URL that already ends in `/chat/completions`, since the SDK appends that path
 itself.
+
+### IBM Bob (`bob`)
+
+`bob` is an api-key provider that targets IBM Bob's inference endpoint at
+`https://api.us-east.bob.ibm.com/inference/v1` (overridable via `BOB_BASE_URL`).
+It is the only provider with a `fixedModel` — `"premium"` — so `resolveModelId`
+returns that ID verbatim and the model-selection step is skipped entirely (see
+`providerHasFixedModel` / `getProviderFixedModel`). `createModel` builds a
+`ChatOpenAI` chat-completions client with a placeholder `apiKey`
+(`"bob-placeholder"`), which only satisfies the constructor's missing-key check;
+the real credential is injected per request by a custom fetch wrapper.
+
+The adapter is `createBobFetch` (`src/agent/bob.ts`), which wraps `fetch` at the
+final request boundary to satisfy Bob's two non-standard requirements:
+
+- It rewrites the `Authorization: Bearer <placeholder>` header that
+  `ChatOpenAI` emits to `Authorization: Apikey <key>`, reading `BOB_API_KEY` from
+  the environment at call time so a hot-reloaded `.env` value is always used.
+- It sets `User-Agent: ibm-bob-openwiki-provider` (the `BOB_USER_AGENT` constant),
+  which Bob's Cloudflare WAF requires to admit the request.
 
 ### ChatGPT OAuth (`openai-chatgpt`)
 
@@ -177,7 +212,27 @@ surface; `createGeminiEnterpriseModel` selects the transport per model ID via
 
 - `gemini` — Google's own Gemini/Gemma models over native `generateContent`, via `ChatGoogle`.
 - `anthropic` — Claude over Anthropic's wire protocol, bridged through `ChatAnthropic`'s `createClient` hook and the `AnthropicVertex` SDK, which authenticates via ADC.
-- `openai-maas` — partner/open-weight models (Llama, Mistral, DeepSeek, Qwen, …) over Vertex's OpenAI-compatible endpoint, whose base URL is built by `vertexOpenAIBaseUrl`.
+- `openai-maas` — partner/open-weight models (Llama, Mistral, DeepSeek, Qwen, Grok, …) over Vertex's OpenAI-compatible endpoint, whose base URL is built by `vertexOpenAIBaseUrl`.
+
+`resolveVertexSurface` classifies the model ID by family, not provider: an
+`anthropic`/`claude` token routes to the Anthropic surface, and an
+`xai`/`grok` token (alongside `llama`, `meta`, `mistral`, `qwen`, `deepseek`,
+`ai21`, `jamba`, and `codellama`) routes to the openai-maas surface; anything
+else defaults to `gemini`. The patterns tolerate both bare IDs and
+publisher-pathed IDs.
+
+```mermaid
+flowchart TD
+    Model["modelId"] --> Resolve["resolveVertexSurface"]
+    Resolve -->|anthropic / claude| Claude["ChatAnthropic createClient plus AnthropicVertex ADC"]
+    Resolve -->|openai-maas / llama, mistral, grok, ...| MaaS["ChatOpenAI at vertexOpenAIBaseUrl, createVertexAuthFetch ADC bearer"]
+    Resolve -->|gemini / default| Gemini["ChatGoogle generateContent ADC"]
+    Claude --> Project["GOOGLE_CLOUD_PROJECT plus GOOGLE_CLOUD_LOCATION"]
+    MaaS --> Project
+    Gemini --> Project
+```
+
+Diagram: How `createGeminiEnterpriseModel` routes one ADC credential to three Vertex surfaces by model family.
 
 For the MaaS surface the OpenAI SDK authenticates via an `Authorization` header,
 so `createVertexAuthFetch` wraps `fetch` to inject a fresh ADC bearer token on
@@ -198,10 +253,25 @@ bearer token (`AWS_BEARER_TOKEN_BEDROCK`) precedence, then validates the legacy
 `BEDROCK_AWS_ACCESS_KEY_ID` / `BEDROCK_AWS_SECRET_ACCESS_KEY` pair and the
 standard `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` pair — rejecting a partial
 or blank pair but allowing an entirely absent one so OIDC/web identity, IAM
-roles, or `AWS_PROFILE`/SSO can still resolve. Bedrock requires a region
-(`requiresRegion`), resolved from `BEDROCK_AWS_REGION` with fallbacks to
-`AWS_REGION` and `AWS_DEFAULT_REGION`. Its model list is empty because available
-model IDs are account- and region-specific and must be pasted directly.
+roles, or `AWS_PROFILE`/SSO can still resolve. A complete legacy pair short-
+circuits to `null` so unrelated standard AWS variables cannot affect the run.
+Bedrock requires a region (`requiresRegion`), resolved from `BEDROCK_AWS_REGION`
+with fallbacks to `AWS_REGION` and `AWS_DEFAULT_REGION`. Its model list is empty
+because available model IDs are account- and region-specific and must be pasted
+directly.
+
+Without an explicit `maxTokens`, the Bedrock Converse API caps output at 4096
+tokens by default, which truncates long wiki pages mid-write. OpenWiki avoids
+this by defaulting Bedrock to a 16000-token ceiling:
+`resolveBedrockMaxTokens` returns `BEDROCK_DEFAULT_MAX_TOKENS` (16000) unless
+`OPENWIKI_BEDROCK_MAX_TOKENS` overrides it (validated as a positive integer),
+matching @langchain/anthropic's built-in ceiling for Claude models. The provider-
+neutral `resolveConfiguredMaxOutputTokens` — used by `createModel` to set
+`maxTokens` — applies this Bedrock default as its last fallback: when the provider-
+neutral `OPENWIKI_MAX_OUTPUT_TOKENS` is unset, a Bedrock run still gets the 16000
+default instead of the Converse API's 4096 cap (the OpenRouter legacy
+`OPENWIKI_OPENROUTER_MAX_TOKENS` setting takes precedence on OpenRouter runs, and
+an explicit `OPENWIKI_MAX_OUTPUT_TOKENS` always wins for any provider).
 
 ### External CLI auth (GitHub Copilot)
 
@@ -215,6 +285,55 @@ flag is derived from the configured `COPILOT_BASE_URL` so a GHE.com data-residen
 host authenticates against the correct tenant. `runExternalCliLogin` can launch
 `gh auth login` interactively when no session exists; for CI, `COPILOT_API_KEY`
 may still be set directly.
+
+The Copilot API serves non-GPT-5 models (Claude, Gemini) over the chat
+completions transport and rejects or returns empty responses for non-streaming
+requests, which would cause repository workers to exit without calling
+`submit_plan`/`submit_page`. `providerUsesStreaming` therefore forces the
+streaming HTTP transport (`streaming: true`) for every Copilot model — the same
+rationale that forces streaming on the openai-chatgpt Codex backend. For GPT-5
+models that use the Responses API (`responsesApi: /^gpt-5/u`), `streaming: true`
+is redundant but harmless, matching the openai-chatgpt provider pattern.
+`createModel` applies this with a conditional spread (`...(providerUsesStreaming(provider) ? { streaming: true } : {})`) rather than assigning `streaming: false`, because LangChain turns an explicit `false` into `disableStreaming`, which is not equivalent to omitting the key.
+
+## Reasoning effort
+
+`OPENWIKI_REASONING_EFFORT` selects a reasoning effort for models that expose
+one. `resolveReasoningConfig` (`src/config/reasoning.ts`) reads it, validates it
+against the permitted `REASONING_EFFORT_VALUES` (`none`, `low`, `medium`, `high`,
+`xhigh`, `max`), and — only when a capability is declared for the
+provider+model pair — returns a `{ effort, transport }` resolution that
+`createModel` turns into the right client option. When the variable is unset,
+no reasoning option is applied; when it is set but no capability matches the
+provider/model, the run throws `OPENWIKI_REASONING_EFFORT is not supported for
+provider "..." and model "..."`.
+
+The transport determines where the effort lands:
+
+- `responses-reasoning` — `reasoning: { effort }` on `ChatOpenAI` (the OpenAI Responses API payload). Used by `openai` and `openai-chatgpt` for the `gpt-5.6-terra`/`gpt-5.6-luna`/`gpt-5.6-sol` models, and by `openai-compatible` when it opts into the Responses API.
+- `chat-completions-reasoning-effort` — `modelKwargs: { reasoning_effort }` on `ChatOpenAI`, for endpoints that take the effort as a chat-completions field. Used by `nvidia` for `nvidia/nemotron-3-super-120b-a12b` (values `none`/`low`/`high`) and by `openai-compatible` when it does not opt into the Responses API.
+- `gemini-thinking-level` — the `thinkingLevel` option on `ChatGoogle`, for Gemini models that expose a thinking budget. `gemini-3.6-flash` supports it with values `low`/`medium`/`high`.
+
+`createModel` spreads exactly one of these three option sets (`responsesReasoningOptions`, `chatCompletionsReasoningOptions`, or `geminiThinkingLevelOptions`) depending on the resolved transport, so a single `OPENWIKI_REASONING_EFFORT` value is routed to the correct wire field per provider and model.
+
+### OpenAI-compatible reasoning opt-in
+
+The `openai-compatible` provider points at arbitrary third-party endpoints, so
+reasoning effort is off by default: without an explicit opt-in,
+`resolveReasoningConfig` returns no capability for `openai-compatible`, and
+because the effort was set, `createModel` throws `not supported`.
+
+Setting `OPENWIKI_OPENAI_COMPATIBLE_REASONING_EFFORT_SUPPORTED=true` opts in.
+The transport then depends on the same Responses-API flag that selects the wire
+transport for the provider:
+
+- with `OPENWIKI_OPENAI_COMPATIBLE_USE_RESPONSES_API=true`, the capability is `responses-reasoning` and the effort is sent as `reasoning: { effort }`;
+- otherwise the capability is `chat-completions-reasoning-effort` and the effort is sent as `modelKwargs: { reasoning_effort }`.
+
+`getOpenAiCompatibleReasoningCapability` derives the transport from
+`providerUsesResponsesApi("openai-compatible", modelId, env)` (which itself reads
+`OPENWIKI_OPENAI_COMPATIBLE_USE_RESPONSES_API`), so the reasoning transport and
+the request transport always agree.
 
 ## Credential persistence and env file
 
