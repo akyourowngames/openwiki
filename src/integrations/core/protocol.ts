@@ -9,12 +9,13 @@ const CanonicalString = z.string().trim().min(1);
 export type HostRunMode = "init" | "update";
 
 /**
- * The complete 0.4 repository-generation MCP tool set.
+ * The complete 0.5 repository-generation MCP tool set.
  */
 export type ProtocolToolName =
   | "openwiki_begin"
   | "openwiki_submit_plan"
   | "openwiki_next_page"
+  | "openwiki_inspect_page_claims"
   | "openwiki_submit_page"
   | "openwiki_finish";
 
@@ -33,7 +34,11 @@ export interface BeginRequest {
   mode: HostRunMode;
 
   /**
-   * Optional requested documentation language.
+   * Optional requested documentation language, as a BCP-47 code (for example
+   * `ko`, `zh-CN`, `pt-BR`) rather than an English language name. An
+   * unrecognized value fails the call with `invalid_input` and starts no run,
+   * so a rejected request leaves nothing to clean up and can simply be retried
+   * with a real code. Omit it to keep the wiki's existing language.
    */
   language?: string;
 
@@ -60,7 +65,9 @@ export const BeginInput: z.ZodType<BeginRequest> = z
   .object({
     root: CanonicalString,
     mode: z.enum(["init", "update"]),
-    language: CanonicalString.optional(),
+    language: CanonicalString.describe(
+      'BCP-47 code, e.g. "ko" (not "Korean").',
+    ).optional(),
     force: z.boolean().optional(),
   })
   .strict();
@@ -107,6 +114,16 @@ export const SubmitPlanInput = z
 export const NextPageInput = RunInput;
 
 /**
+ * Strict MCP schema for inspecting the current pending page's Claims on demand.
+ */
+export const InspectPageClaimsInput = z
+  .object({
+    runId: z.string().uuid(),
+    jobId: z.string().uuid(),
+  })
+  .strict();
+
+/**
  * Strict proposed material Claim with code-owned version omitted.
  */
 export const ProposedPageClaimInput = z
@@ -124,10 +141,9 @@ export const SubmitPageInput = z
   .object({
     runId: z.string().uuid(),
     jobId: z.string().uuid(),
-    // Every PageJob is a factual concept page. Structural index pages are
-    // deterministic and never become jobs, so a completed page must establish
-    // at least one material repository-grounded Claim.
-    claims: z.array(ProposedPageClaimInput).min(1),
+    confirmedClaimIds: z.array(CanonicalString).optional(),
+    claims: z.array(ProposedPageClaimInput).optional(),
+    retractedClaimIds: z.array(CanonicalString).optional(),
   })
   .strict();
 
@@ -140,6 +156,9 @@ export type SubmitPlanRequest = z.infer<typeof SubmitPlanInput>;
  * Validated next-page request payload.
  */
 export type NextPageRequest = z.infer<typeof NextPageInput>;
+
+/** Validated request for the current pending page's complete Claims. */
+export type InspectPageClaimsRequest = z.infer<typeof InspectPageClaimsInput>;
 
 /**
  * Validated page completion payload.

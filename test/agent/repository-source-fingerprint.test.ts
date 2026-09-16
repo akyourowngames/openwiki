@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { Mode, PathLike } from "node:fs";
+import type { BigIntStats, Mode, PathLike } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -21,6 +21,8 @@ import {
 
 const fingerprintRace = vi.hoisted(() => ({
   replacementPath: null as string | null,
+  openedStatMutationPath: null as string | null,
+  openedStatMutation: null as ((stats: BigIntStats) => void) | null,
   symlinkTarget: null as string | null,
 }));
 
@@ -42,12 +44,35 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         await actual.rm(filePath);
         await actual.symlink(symlinkTarget, filePath);
       }
-      return actual.open(filePath, flags, mode);
+      const handle = await actual.open(filePath, flags, mode);
+      if (
+        typeof filePath === "string" &&
+        filePath === fingerprintRace.openedStatMutationPath
+      ) {
+        const mutateStats = fingerprintRace.openedStatMutation;
+        fingerprintRace.openedStatMutationPath = null;
+        fingerprintRace.openedStatMutation = null;
+        if (!mutateStats) {
+          throw new Error(
+            "Expected an opened stat mutation for the injected race.",
+          );
+        }
+        const originalStat = handle.stat.bind(handle) as (options: {
+          bigint: true;
+        }) => Promise<BigIntStats>;
+        handle.stat = (async () => {
+          const stats = await originalStat({ bigint: true });
+          mutateStats(stats);
+          return stats;
+        }) as typeof handle.stat;
+      }
+      return handle;
     },
   };
 });
 
 const execFileAsync = promisify(execFile);
+const ORIGINAL_PLATFORM = process.platform;
 let repositoryRoot: string;
 
 /**
@@ -110,15 +135,53 @@ async function createRepository(): Promise<string> {
   return root;
 }
 
+function stubPlatform(value: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value,
+  });
+}
+
+const WINDOWS_REPLACEMENT_STAT_MUTATIONS: Array<
+  [field: string, mutateStats: (stats: BigIntStats) => void]
+> = [
+  [
+    "size",
+    (stats) => {
+      stats.size += 1n;
+    },
+  ],
+  [
+    "mtimeNs",
+    (stats) => {
+      stats.mtimeNs += 1n;
+    },
+  ],
+  [
+    "birthtimeNs",
+    (stats) => {
+      stats.birthtimeNs += 1n;
+    },
+  ],
+];
+
 beforeEach(async () => {
   fingerprintRace.replacementPath = null;
+  fingerprintRace.openedStatMutationPath = null;
+  fingerprintRace.openedStatMutation = null;
   fingerprintRace.symlinkTarget = null;
   await createRepository();
 });
 
 afterEach(async () => {
   fingerprintRace.replacementPath = null;
+  fingerprintRace.openedStatMutationPath = null;
+  fingerprintRace.openedStatMutation = null;
   fingerprintRace.symlinkTarget = null;
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: ORIGINAL_PLATFORM,
+  });
   await rm(repositoryRoot, { recursive: true, force: true });
 });
 
@@ -180,13 +243,18 @@ describe("createRepositorySourceFingerprint", () => {
     expect(await fingerprint()).not.toBe(before);
   });
 
-  test("changes when a source file executable bit changes", async () => {
+  test("tracks executable bit changes when the platform exposes them", async () => {
     const trackedPath = path.join(repositoryRoot, "src", "tracked.ts");
     const before = await fingerprint();
 
     await chmod(trackedPath, 0o755);
 
-    expect(await fingerprint()).not.toBe(before);
+    const after = await fingerprint();
+    if (process.platform === "win32") {
+      expect(after).toBe(before);
+    } else {
+      expect(after).not.toBe(before);
+    }
   });
 
   test("hashes a symlink target string without following the target", async () => {
@@ -238,6 +306,52 @@ describe("createRepositorySourceFingerprint", () => {
       await rm(outside, { recursive: true, force: true });
     }
   });
+
+  test("does not reject Windows file handles solely because dev and ino differ", async () => {
+    fingerprintRace.openedStatMutationPath = path.join(
+      repositoryRoot,
+      "src",
+      "tracked.ts",
+    );
+    fingerprintRace.openedStatMutation = (stats) => {
+      stats.dev += 1n;
+      stats.ino += 1n;
+    };
+    stubPlatform("win32");
+
+    await expect(fingerprint()).resolves.toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  test("does not reject Windows file handles solely because ctimeNs changes", async () => {
+    fingerprintRace.openedStatMutationPath = path.join(
+      repositoryRoot,
+      "src",
+      "tracked.ts",
+    );
+    fingerprintRace.openedStatMutation = (stats) => {
+      stats.ctimeNs += 1n;
+    };
+    stubPlatform("win32");
+
+    await expect(fingerprint()).resolves.toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  test.each(WINDOWS_REPLACEMENT_STAT_MUTATIONS)(
+    "rejects Windows file handles when %s changes",
+    async (_field, mutateStats) => {
+      fingerprintRace.openedStatMutationPath = path.join(
+        repositoryRoot,
+        "src",
+        "tracked.ts",
+      );
+      fingerprintRace.openedStatMutation = mutateStats;
+      stubPlatform("win32");
+
+      await expect(fingerprint()).rejects.toThrow(
+        "Source path changed while fingerprinting src/tracked.ts.",
+      );
+    },
+  );
 
   test("changes with .openwikiignore while excluding paths it ignores", async () => {
     const before = await fingerprint();
@@ -311,7 +425,10 @@ describe("createRepositorySourceFingerprint", () => {
   });
 
   test("parses unusual tracked filenames from NUL-delimited Git output", async () => {
-    const unusualName = " leading space\nsecond line\t雪.ts";
+    const unusualName =
+      process.platform === "win32"
+        ? "unicode-filename-雪.ts"
+        : " leading space\nsecond line\t雪.ts";
     const unusualPath = path.join(repositoryRoot, unusualName);
     await writeFile(unusualPath, "export const unusual = 1;\n", "utf8");
     await git(["add", "--", unusualName]);

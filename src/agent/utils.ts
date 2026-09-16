@@ -27,7 +27,7 @@ import {
 } from "../platform/fs-errors.js";
 import {
   getPrimaryLanguageSubtag,
-  resolveLanguage,
+  requireResolvedLanguage,
 } from "../platform/language.js";
 import {
   readOpenWikiOnboardingConfig,
@@ -79,8 +79,9 @@ export async function createRunContext(
   const lastUpdate = await readLastUpdate(cwd, outputMode);
   // A validated flag wins; otherwise inherit the wiki's persisted language so an
   // update without --language keeps the existing wiki consistent instead of
-  // producing a mix of the old and new language.
-  const requestedLanguage = resolveLanguage(language).language;
+  // producing a mix of the old and new language. An unrecognized value never
+  // reaches here: every entry point rejects one before any run work starts.
+  const requestedLanguage = requireResolvedLanguage(language);
   // English is materialized as "en" rather than encoded by an absent key, so the
   // wiki's language is always explicit in metadata and every run inherits a
   // concrete value.
@@ -137,7 +138,7 @@ export async function getUpdateNoopStatus(
     return { shouldSkip: false, reason: "previous update was interrupted" };
   }
 
-  const resolvedRequestedLanguage = resolveLanguage(requestedLanguage).language;
+  const resolvedRequestedLanguage = requireResolvedLanguage(requestedLanguage);
   if (
     resolvedRequestedLanguage !== undefined &&
     getPrimaryLanguageSubtag(resolvedRequestedLanguage) !==
@@ -626,11 +627,7 @@ async function readFingerprintRegularFile(
 
   try {
     const openedStats = await fileHandle.stat({ bigint: true });
-    if (
-      !openedStats.isFile() ||
-      openedStats.dev !== inspectedStats.dev ||
-      openedStats.ino !== inspectedStats.ino
-    ) {
+    if (!isSameFingerprintRegularFile(inspectedStats, openedStats)) {
       throw new Error(
         `Source path changed while fingerprinting ${sourcePath}.`,
       );
@@ -643,6 +640,33 @@ async function readFingerprintRegularFile(
   } finally {
     await fileHandle.close();
   }
+}
+
+function isSameFingerprintRegularFile(
+  inspectedStats: BigIntStats,
+  openedStats: BigIntStats,
+): boolean {
+  if (!openedStats.isFile()) {
+    return false;
+  }
+
+  if (process.platform !== "win32") {
+    return (
+      openedStats.dev === inspectedStats.dev &&
+      openedStats.ino === inspectedStats.ino
+    );
+  }
+
+  // Windows can report different dev/ino values for the same file depending on
+  // which stat API produced them. Keep the same-file guard, but use metadata
+  // that is stable across lstat() and FileHandle.stat() on that platform.
+  // ctimeNs can change for the same file between those calls on Windows, so it
+  // cannot participate in this fallback identity check.
+  return (
+    openedStats.size === inspectedStats.size &&
+    openedStats.mtimeNs === inspectedStats.mtimeNs &&
+    openedStats.birthtimeNs === inspectedStats.birthtimeNs
+  );
 }
 
 /**

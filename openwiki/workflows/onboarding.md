@@ -10,6 +10,8 @@ sources:
     resource: repo://src/cli/runners.ts
   - id: openwiki-source-d80f123259efa4712b198b63
     resource: repo://src/cli/startup.ts
+  - id: openwiki-source-278e7e180eac811fc1a24f7a
+    resource: repo://src/config/constants.ts
   - id: openwiki-source-c2770ac037a7f4b0116a0dc5
     resource: repo://src/config/env.ts
   - id: openwiki-source-7d433875b0854d0b8b951be0
@@ -18,6 +20,8 @@ sources:
     resource: repo://src/generation/repository-run.ts
   - id: openwiki-source-85064d6a188fa56bcc282f11
     resource: repo://src/ingestion/code-mode.ts
+  - id: openwiki-source-349c953869b025f9d4935470
+    resource: repo://src/platform/language.ts
   - id: openwiki-source-28a5ae6f5a5bb7466bd04868
     resource: repo://src/setup/credentials/constants.ts
   - id: openwiki-source-c35800ddf00768a1fa848d13
@@ -28,10 +32,12 @@ sources:
     resource: repo://src/setup/credentials/use-init-setup.ts
   - id: openwiki-source-14d4f389b56575bb7afd1310
     resource: repo://src/setup/onboarding.ts
-generated: { by: "openwiki/0.4.3", at: "2026-08-28T03:39:43.412Z" }
+  - id: openwiki-source-224b03172757408e1b558fa7
+    resource: repo://test/ingestion/code-mode.test.ts
+generated: { by: "openwiki/0.5.2", at: "2026-09-15T08:09:47.649Z" }
 verified:
-  - by: openwiki/0.4.3
-    at: 2026-08-28T03:39:43.412Z
+  - by: openwiki/0.5.2
+    at: 2026-09-15T08:09:47.649Z
 ---
 
 # Onboarding and Setup
@@ -121,8 +127,8 @@ by a controller state machine. The steps that apply to a given provider and run
 mode, in walk order, are produced by `orderedSetupSteps`: an optional run-mode
 chooser, the provider selection, the provider's primary credential step, any
 provider-specific steps (secret key, GCP project/location, base URL, region),
-then the model step, the LangSmith step, and finally — only in code mode — a
-`code-repo-confirm` step.
+then the model step (skipped for providers that pin a single `fixedModel`), the
+LangSmith step, and finally — only in code mode — a `code-repo-confirm` step.
 
 The primary credential step is chosen per provider by `credentialStep`: OAuth
 providers use `oauth-login`, AWS-SDK providers have no in-wizard step (they are
@@ -130,13 +136,22 @@ handled via AWS credentials), external-CLI providers use `external-cli-auth`,
 API-key providers use `api-key`, and keyless providers that require a GCP project
 use `gcp-project`.
 
+A provider with a `fixedModel` (checked by `providerHasFixedModel`) always uses
+that single model ID and skips the model-selection step entirely — the value is
+used verbatim rather than normalized. The IBM Bob provider is the fixed-model
+case: it pins `fixedModel: "premium"`, authenticates with an API key
+(`BOB_API_KEY`, via the `api-key` credential step), and exposes an optional
+`BOB_BASE_URL`, so its spine runs provider → api-key → langsmith →
+(code-repo-confirm in code mode) with no model step.
+
 ```mermaid
 stateDiagram-v2
   [*] --> run_mode
   run_mode --> provider
   provider --> credential
   credential --> extra_provider_steps
-  extra_provider_steps --> model
+  extra_provider_steps --> model: non-fixedModel provider
+  extra_provider_steps --> langsmith: fixedModel provider
   model --> langsmith
   langsmith --> code_repo_confirm: code mode
   langsmith --> [*]: personal mode
@@ -144,6 +159,9 @@ stateDiagram-v2
 ```
 
 Ordered setup steps for code vs. personal mode as returned by orderedSetupSteps.
+The model step is emitted only when the provider does not pin a fixedModel
+(providerHasFixedModel), so a fixedModel provider such as IBM Bob goes straight
+from the provider-specific steps to the LangSmith step.
 
 Two functions distinguish "which step to jump to" from "which steps exist".
 `getInitialStep` is a skip-based waterfall that lands on the first unsatisfied
@@ -201,14 +219,38 @@ repository runs (`beginRepositoryRun`). It:
   region between the `<!-- OPENWIKI:START -->` / `<!-- OPENWIKI:END -->` markers
   is replaced, so operator content outside the markers survives. Both files are
   prepared and validated before either is written, and malformed or duplicated
-  markers abort the update with the file left unchanged. The `CLAUDE.md` snippet
-  is deliberately minimal and just points to `AGENTS.md`.
+  markers abort the update with the file left unchanged. By default the
+  `CLAUDE.md` managed block is deliberately minimal and just points to
+  `AGENTS.md` via the `@AGENTS.md` import, so `AGENTS.md` stays the single
+  canonical source of agent instructions.
+- **Import-only CLAUDE.md preservation.** Two branches keep a forwarding
+  `CLAUDE.md` intact. First, a `CLAUDE.md` whose trimmed content is exactly
+  `@AGENTS.md` (the `CLAUDE_AGENTS_IMPORT` sentinel) is left entirely unchanged —
+  `prepareCodeModeAgentSnippet` returns `nextContent: undefined`, so the file is
+  neither created nor rewritten. This recognizes the common pattern of a
+  `CLAUDE.md` that only forwards to `AGENTS.md` and keeps it as the operator
+  wrote it. Second, `writeCodeModeAgentSnippets` calls `resolvesToSameFile` to
+  detect when `CLAUDE.md` and `AGENTS.md` resolve to the same file on disk
+  (e.g. `CLAUDE.md` is a symlink to `AGENTS.md`, sharing inode and device). In
+  that case the `@AGENTS.md` import would point the file at itself, so the
+  `CLAUDE.md` snippet instead carries the full instructions inline — the same
+  snippet written into `AGENTS.md` — rather than the minimal pointer. A
+  `CLAUDE.md` that is neither the bare import nor the same file as `AGENTS.md`,
+  but contains marker regions or any other content, is refreshed in place like
+  `AGENTS.md`.
 - Creates the scheduled-update GitHub Actions workflow
   (`.github/workflows/openwiki-update.yml`) **only** when `createWorkflow` is set,
   which is the case only for the `init` command. `--update` and chat runs leave
   an existing workflow alone, and even under `init` the workflow is written only
   when it does not already exist, so operator customizations (fork guards, pinned
   actions, custom steps) are never silently overwritten.
+
+Before `beginRepositoryRun` touches the repository it also validates the
+requested `--language` value: an unrecognized tag is rejected up front (via
+`resolveLanguage`) rather than silently defaulted to English. This matters for
+setup because a wrong language would be persisted in durable run state, and a
+later resume refuses to change a started run's language — so the typo could not
+be corrected without deleting OpenWiki's own state files.
 
 The generated workflow (`createCodeModeWorkflow`) emits a `workflow_dispatch`-
 plus-scheduled GitHub Actions job whose `name:` is `OpenWiki Update`, gated by

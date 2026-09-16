@@ -3,9 +3,6 @@ type: cli-reference
 title: CLI Commands and Flags
 description: Reference for the OpenWiki CLI surface, covering command and flag parsing, run mode selection, print versus interactive dispatch, host integrations, visualize, cron scheduling, and how parsed commands are wired to their runners.
 tags: [cli, commands, flags, run-mode, integrations, visualize, cron, ink, mcp]
-verified:
-  - by: openwiki/0.3.3
-    at: 2026-08-25T02:14:25.283Z
 sources:
   - id: openwiki-source-5f52dc71fb07ef4892914c46
     resource: repo://src/cli/app/app.tsx
@@ -13,6 +10,8 @@ sources:
     resource: repo://src/cli/cli.tsx
   - id: openwiki-source-3fc16f0371ced4d94330f06c
     resource: repo://src/cli/commands.ts
+  - id: openwiki-source-9472f4eef69027c6849ac706
+    resource: repo://src/cli/diagnostics/error-diagnostics.ts
   - id: openwiki-source-ada18c62d92003b613355e30
     resource: repo://src/cli/integrations.ts
   - id: openwiki-source-8d81ffb5996861d05633851c
@@ -23,7 +22,16 @@ sources:
     resource: repo://src/cli/schedule-format.ts
   - id: openwiki-source-d80f123259efa4712b198b63
     resource: repo://src/cli/startup.ts
-generated: { by: "openwiki/0.3.3", at: "2026-08-25T02:14:25.283Z" }
+  - id: openwiki-source-04a008dbe4969919f7141a55
+    resource: repo://src/platform/diagnostics.ts
+  - id: openwiki-source-349c953869b025f9d4935470
+    resource: repo://src/platform/language.ts
+  - id: openwiki-source-f5f9f9512cc2874a9127f6e1
+    resource: repo://test/cli/diagnostics/error-diagnostics.test.ts
+generated: { by: "openwiki/0.5.0", at: "2026-09-09T08:09:59.193Z" }
+verified:
+  - by: openwiki/0.5.0
+    at: 2026-09-09T08:09:59.193Z
 ---
 
 # CLI Commands and Flags
@@ -90,14 +98,21 @@ Any invocation that is not a recognized subcommand is parsed by
 respective run command; specifying both is a parse error. `-p`/`--print`
 requests non-interactive output; because print needs something to do, it errors
 unless a message, `--init`, or `--update` is present. `--language`/`-l` takes a
-locale that is canonicalized via `resolveLanguage`, dropping and warning about
-unrecognized values before they reach the run. `--modelId`/`--model-id` (with
+locale that is canonicalized via `resolveLanguage` when valid; an unrecognized
+BCP-47 value is rejected with a parse error (`{ kind: "error", exitCode: 1 }`)
+whose message names the offending value and suggests a BCP-47 code such as
+`ko`, `zh-CN`, or `pt-BR`, so a typo can never quietly produce an English wiki. `--modelId`/`--model-id` (with
 `=value` and space-separated forms) is normalized and validated against
 `isValidModelId`. `--telemetry-file` records a run-event sink path. `--debug`
 sets `OPENWIKI_DEBUG` at parse time, and the developer-only `--dry-run` is
 rejected as an unknown option outside development mode
 (`NODE_ENV=development` or `OPENWIKI_DEV=1`). Remaining positional words are
 joined into the user message.
+
+The `resolveLanguage`/`requireResolvedLanguage` internals — how
+`getCanonicalLocales` and `DisplayNames` distinguish a recognized BCP-47 code
+from a structurally valid but unregistered one — are documented in
+[Configuration and Environment](./configuration.md).
 
 ### Run mode selection
 
@@ -122,6 +137,23 @@ cron, pipes). In that case the entrypoint calls `runPrintCommand`, which streams
 events into a buffer, prints to stdout, and reports failures on stderr with auth
 "how to fix" and error diagnostics (`writePrintAuthFix`,
 `writePrintErrorDiagnostics`). Otherwise the entrypoint renders the Ink `App`.
+
+`writePrintErrorDiagnostics` renders the `ErrorDiagnostic` list that
+`getErrorDiagnostics` (in `src/cli/diagnostics/error-diagnostics.ts`) extracts
+from the error. It always surfaces OpenRouter metadata (`provider_name`,
+`is_byok`, `finish_reason`, the `raw` body, and a `previous_errors` list capped
+at five) and any attached `openRouterDebug` payload — these are read regardless
+of debug mode. When `OPENWIKI_DEBUG` is set and the error is an `Error`
+instance, the panel additionally includes the error `name`, a sanitized
+`message`, an inline HTTP status extracted from the message
+(`httpStatusFromMessage`, the first 4xx/5xx value), and a `stack` diagnostic.
+The stack is sanitized via `sanitizeDiagnosticText` — which redacts the live
+values of secret-bearing environment variables and bearer-token / known provider
+key patterns such as `sk-or-v1-…` — and truncated to 2,000 characters with a
+trailing `...` so a long trace cannot flood the terminal. Debug mode also widens
+the walk to nested `cause`/`error`/`response` objects and other allowlisted
+fields; the final list is deduped by `label:value`.
+
 Interactive chat with no message still requires a TTY: `resolveStartupCommand`
 converts such a run into an error telling the user to pass a message or use
 `--init`/`--update`. `resolveStartupCommand` also fails non-interactive runs when

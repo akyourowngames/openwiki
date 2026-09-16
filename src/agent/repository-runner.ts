@@ -1,6 +1,17 @@
 import { scheduler } from "node:timers/promises";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { ToolMessage } from "@langchain/core/messages";
+import {
+  AIMessage,
+  AIMessageChunk,
+  ChatMessage,
+  ChatMessageChunk,
+  ToolMessage,
+  collapseToolCallChunks,
+  defaultToolCallParser,
+  type InvalidToolCall,
+  type ToolCall,
+  type ToolCallChunk,
+} from "@langchain/core/messages";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { createDeepAgent, createFilesystemMiddleware } from "deepagents";
 import { createMiddleware } from "langchain";
@@ -10,6 +21,7 @@ import {
   beginRepositoryRun,
   captureRepositoryPageSnapshot,
   finishRepositoryRun,
+  inspectRepositoryPageClaims,
   nextRepositoryPage,
   skipRepositoryPage,
   submitRepositoryPage,
@@ -62,6 +74,14 @@ const ClaimSchema = z
   })
   .strict();
 
+const ClaimReconciliationSchema = z
+  .object({
+    confirmedClaimIds: z.array(z.string().trim().min(1)).optional(),
+    claims: z.array(ClaimSchema).optional(),
+    retractedClaimIds: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+
 const PLANNER_FILESYSTEM_TOOLS = ["read_file", "ls", "glob", "grep"] as const;
 const PAGE_FILESYSTEM_TOOLS = [
   ...PLANNER_FILESYSTEM_TOOLS,
@@ -71,6 +91,7 @@ const PAGE_FILESYSTEM_TOOLS = [
 const WORKER_TOOL_NAMES = new Set<string>([
   ...PAGE_FILESYSTEM_TOOLS,
   "submit_plan",
+  "inspect_claims",
   "submit_page",
 ]);
 
@@ -79,17 +100,123 @@ const WORKER_TOOL_NAMES = new Set<string>([
 // model-facing capability after all tool-contributing middleware has run.
 const NO_DELEGATION_MIDDLEWARE = createMiddleware({
   name: "OpenWikiRepositoryWorkerNoDelegation",
-  wrapModelCall: (request, handler) =>
-    handler({
+  wrapModelCall: async (request, handler) => {
+    const response = await handler({
       ...request,
       tools: request.tools?.filter(({ name }) => name !== "task"),
-    }),
+    });
+
+    return coerceRepositoryWorkerModelResponse(response);
+  },
 });
 
 type PendingPageJob = Extract<
   NextRepositoryPageResult,
   { status: "pending" }
 >["job"];
+
+/**
+ * Normalizes provider-streaming aggregates that are assistant output but were
+ * typed as generic chat messages because the first OpenAI-compatible SSE delta
+ * arrived without `role:"assistant"` (for example reasoning-only first deltas).
+ *
+ * LangChain validates each wrapModelCall response before the agent node can
+ * continue. Coerce only this repository-worker boundary so provider transport
+ * handling stays owned by the model client.
+ */
+function coerceRepositoryWorkerModelResponse(response: AIMessage): AIMessage {
+  const candidate: unknown = response;
+
+  if (AIMessage.isInstance(candidate)) {
+    return candidate;
+  }
+
+  if (
+    ChatMessageChunk.isInstance(candidate) &&
+    isGenericAssistantModelResponse(candidate)
+  ) {
+    const rawToolCalls = getOpenAiRawToolCalls(candidate.additional_kwargs);
+    const toolCallFields =
+      rawToolCalls === null
+        ? {}
+        : collapseToolCallChunks(rawToolCalls.map(toToolCallChunk));
+
+    return new AIMessageChunk({
+      content: candidate.content,
+      additional_kwargs: candidate.additional_kwargs,
+      response_metadata: candidate.response_metadata,
+      id: candidate.id,
+      name: candidate.name,
+      ...toolCallFields,
+    });
+  }
+
+  if (
+    ChatMessage.isInstance(candidate) &&
+    isGenericAssistantModelResponse(candidate)
+  ) {
+    const rawToolCalls = getOpenAiRawToolCalls(candidate.additional_kwargs);
+    const toolCallFields =
+      rawToolCalls === null ? {} : parseRawOpenAiToolCalls(rawToolCalls);
+
+    return new AIMessage({
+      content: candidate.content,
+      additional_kwargs: candidate.additional_kwargs,
+      response_metadata: candidate.response_metadata,
+      id: candidate.id,
+      name: candidate.name,
+      ...toolCallFields,
+    });
+  }
+
+  return response;
+}
+
+function isGenericAssistantModelResponse(response: { role?: string }): boolean {
+  return response.role === undefined || response.role === "assistant";
+}
+
+function getOpenAiRawToolCalls(
+  additionalKwargs: Record<string, unknown> | undefined,
+): Record<string, unknown>[] | null {
+  const rawToolCalls = additionalKwargs?.tool_calls;
+
+  if (!Array.isArray(rawToolCalls)) {
+    return null;
+  }
+
+  return rawToolCalls.filter(isRecord);
+}
+
+function parseRawOpenAiToolCalls(rawToolCalls: Record<string, unknown>[]): {
+  invalid_tool_calls: InvalidToolCall[];
+  tool_calls: ToolCall[];
+} {
+  const [toolCalls, invalidToolCalls] = defaultToolCallParser(rawToolCalls);
+
+  return {
+    invalid_tool_calls: invalidToolCalls,
+    tool_calls: toolCalls,
+  };
+}
+
+function toToolCallChunk(rawToolCall: Record<string, unknown>): ToolCallChunk {
+  const rawFunction = rawToolCall.function;
+  const functionFields = isRecord(rawFunction) ? rawFunction : {};
+
+  return {
+    id: typeof rawToolCall.id === "string" ? rawToolCall.id : undefined,
+    index:
+      typeof rawToolCall.index === "number" ? rawToolCall.index : undefined,
+    name:
+      typeof functionFields.name === "string" ? functionFields.name : undefined,
+    args:
+      typeof functionFields.arguments === "string"
+        ? functionFields.arguments
+        : undefined,
+    type: "tool_call_chunk",
+  };
+}
 
 /**
  * Converts a correctable submission rejection into a failed tool result.
@@ -266,7 +393,7 @@ async function beginNativeRepositoryRun(
 }
 
 /**
- * Runs one bounded planner that must submit exactly one durable plan.
+ * Runs one bounded planner that must submit a durable plan.
  *
  * @param run - Active durable repository run.
  * @param view - Current host-facing planning context.
@@ -300,11 +427,6 @@ async function runPlanningAgent(
       "Submit the final canonical OpenWiki page plan. This is the only completion action for planning.",
     schema: PlanSchema,
     func: async (input, _runManager, config) => {
-      if (submitted) {
-        throw new Error(
-          "submit_plan was already called for this planning worker.",
-        );
-      }
       try {
         const result = await submitRepositoryPlan(run, input);
         submitted = true;
@@ -420,19 +542,27 @@ async function runPageAgent(
 
   let submitted = false;
   let fatalSubmissionFailure = false;
+  const inspectClaimsTool = new DynamicStructuredTool({
+    name: "inspect_claims",
+    description:
+      "Return this page's complete current Claim set without opaque evidence versions. Use only before intentionally revising or removing otherwise-current content; stale or unresolved Claims already appear in the assignment.",
+    schema: z.object({}).strict(),
+    func: () =>
+      Promise.resolve(JSON.stringify(inspectRepositoryPageClaims(run, job.id))),
+  });
   const submitPageTool = new DynamicStructuredTool({
     name: "submit_page",
     description:
-      "Complete the assigned page after writing it by submitting its complete intended material Claim set. Every evidence resource must use repo://<repository-relative-path>, optionally with #Lx-Ly.",
-    schema: z.object({ claims: z.array(ClaimSchema).min(1) }).strict(),
-    func: async ({ claims }, _runManager, config) => {
+      "Complete the assigned page after writing it. Submit only sparse Claim decisions: confirmedClaimIds for rechecked issue Claims kept unchanged, claims for revisions/additions, and retractedClaimIds for removals. Other current Claims are retained automatically. Evidence must use repo://<repository-relative-path>, optionally with #Lx-Ly.",
+    schema: ClaimReconciliationSchema,
+    func: async (reconciliation, _runManager, config) => {
       if (submitted) {
         throw new Error("submit_page was already called for this page worker.");
       }
       try {
         const result = await submitRepositoryPage(run, {
           jobId: job.id,
-          claims,
+          ...reconciliation,
         });
         submitted = true;
         return JSON.stringify(result);
@@ -444,7 +574,7 @@ async function runPageAgent(
           return createSubmissionRejection(
             "submit_page",
             error,
-            "Correct the assigned page or complete Claim payload and call submit_page again.",
+            "Correct the assigned page or sparse Claim decisions and call submit_page again.",
             (config as { toolCall?: { id?: string } } | undefined)?.toolCall
               ?.id,
           );
@@ -458,7 +588,7 @@ async function runPageAgent(
   const backend = createAgentBackend(wikiBackend);
   const agent = createDeepAgent({
     model,
-    tools: [submitPageTool],
+    tools: [inspectClaimsTool, submitPageTool],
     backend,
     middleware: [
       createFilesystemMiddleware({
